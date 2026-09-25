@@ -121,3 +121,12 @@ POST /auth/oauth/token
   - `GET /reports/occupancy` (نسبة الإشغال والوحدات الشاغرة)
   - `GET /reports/contracts-summary` (ملخص حالات العقود)
   - `GET /reports/financial-summary` (الإيرادات، المصروفات، وصافي الدخل)
+
+## Dashboard APIs حسب الدور
+
+- `GET /dashboard/management` (للإدارة)
+- `GET /dashboard/employee` (للموظف)
+- `GET /dashboard/owner` (للمالك)
+- `GET /dashboard/tenant` (للمستأجر)
+- `GET /dashboard/technician` (للفني)
+- `GET /dashboard/me` (يرجع لوحة الدور الحالي تلقائياً)

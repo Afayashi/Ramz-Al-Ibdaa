@@ -856,6 +856,86 @@ function createApp(options = {}) {
     }
   });
 
+  app.get('/dashboard/management', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), async (_req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const dashboard = await buildManagementDashboard(db);
+      res.json(dashboard);
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/dashboard/employee', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), async (req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const dashboard = await buildEmployeeDashboard(db, req.user.sub);
+      res.json(dashboard);
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/dashboard/owner', authenticateJwt, requireRoles(['owner']), async (req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const dashboard = await buildOwnerDashboard(db, req.user.sub);
+      res.json(dashboard);
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/dashboard/tenant', authenticateJwt, requireRoles(['tenant']), async (req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const dashboard = await buildTenantDashboard(db, req.user.sub);
+      res.json(dashboard);
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/dashboard/technician', authenticateJwt, requireRoles(['technician']), async (req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const dashboard = await buildTechnicianDashboard(db, req.user.sub);
+      res.json(dashboard);
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/dashboard/me', authenticateJwt, async (req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const role = req.user.role;
+      if (['system_admin', 'operations_manager', 'financial_auditor'].includes(role)) {
+        res.json(await buildManagementDashboard(db));
+        return;
+      }
+      if (['leasing_officer', 'collections_officer'].includes(role)) {
+        res.json(await buildEmployeeDashboard(db, req.user.sub));
+        return;
+      }
+      if (role === 'owner') {
+        res.json(await buildOwnerDashboard(db, req.user.sub));
+        return;
+      }
+      if (role === 'tenant') {
+        res.json(await buildTenantDashboard(db, req.user.sub));
+        return;
+      }
+      if (role === 'technician') {
+        res.json(await buildTechnicianDashboard(db, req.user.sub));
+        return;
+      }
+      res.status(403).json({ error: 'No dashboard for this role' });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
   app.post('/auth/oauth/token', async (req, res) => {
     const {
       grant_type: grantType,
@@ -1033,6 +1113,207 @@ function resolvePortalForRole(role) {
     return 'technician';
   }
   return null;
+}
+
+async function buildManagementDashboard(db) {
+  const [contractsRow] = await queryAll(
+    db,
+    `SELECT
+       COUNT(*) AS totalContracts,
+       SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS activeContracts
+     FROM contracts`,
+  );
+  const [maintenanceRow] = await queryAll(
+    db,
+    `SELECT
+       SUM(CASE WHEN status IN ('open', 'assigned', 'in_progress', 'awaiting_employee_approval') THEN 1 ELSE 0 END) AS openMaintenance,
+       SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closedMaintenance
+     FROM maintenance_requests`,
+  );
+  const [financeRow] = await queryAll(
+    db,
+    `SELECT COALESCE(SUM(amount), 0) AS collectedRent
+     FROM payments WHERE status = 'paid'`,
+  );
+
+  return {
+    role: 'management',
+    contracts: {
+      total: Number(contractsRow?.totalContracts || 0),
+      active: Number(contractsRow?.activeContracts || 0),
+    },
+    maintenance: {
+      open: Number(maintenanceRow?.openMaintenance || 0),
+      closed: Number(maintenanceRow?.closedMaintenance || 0),
+    },
+    finance: {
+      collectedRent: Number(financeRow?.collectedRent || 0),
+    },
+  };
+}
+
+async function buildEmployeeDashboard(db, userId) {
+  const [contractRow] = await queryAll(
+    db,
+    `SELECT
+       SUM(CASE WHEN status = 'pending_approval' THEN 1 ELSE 0 END) AS pendingApprovalContracts,
+       SUM(CASE WHEN status = 'signed' THEN 1 ELSE 0 END) AS readyToActivateContracts
+     FROM contracts`,
+  );
+  const [maintenanceRow] = await queryAll(
+    db,
+    `SELECT
+       SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS newMaintenance,
+       SUM(CASE WHEN status = 'awaiting_employee_approval' THEN 1 ELSE 0 END) AS awaitingApprovalMaintenance
+     FROM maintenance_requests`,
+  );
+  const [notificationsRow] = await queryAll(
+    db,
+    `SELECT COUNT(*) AS unreadNotifications
+     FROM notifications
+     WHERE user_id = ? AND status <> 'read'`,
+    [userId],
+  );
+
+  return {
+    role: 'employee',
+    contracts: {
+      pendingApproval: Number(contractRow?.pendingApprovalContracts || 0),
+      readyToActivate: Number(contractRow?.readyToActivateContracts || 0),
+    },
+    maintenance: {
+      new: Number(maintenanceRow?.newMaintenance || 0),
+      awaitingApproval: Number(maintenanceRow?.awaitingApprovalMaintenance || 0),
+    },
+    notifications: {
+      unread: Number(notificationsRow?.unreadNotifications || 0),
+    },
+  };
+}
+
+async function buildOwnerDashboard(db, ownerId) {
+  const [propertyRow] = await queryAll(
+    db,
+    'SELECT COUNT(*) AS propertiesCount FROM properties WHERE owner_id = ?',
+    [ownerId],
+  );
+  const [contractRow] = await queryAll(
+    db,
+    `SELECT COUNT(*) AS activeContracts
+     FROM contracts
+     WHERE owner_id = ? AND status = 'active'`,
+    [ownerId],
+  );
+  const [revenueRow] = await queryAll(
+    db,
+    `SELECT COALESCE(SUM(p.amount), 0) AS totalRevenue
+     FROM payments p
+     INNER JOIN contracts c ON c.id = p.contract_id
+     WHERE c.owner_id = ? AND p.status = 'paid'`,
+    [ownerId],
+  );
+  const [maintenanceRow] = await queryAll(
+    db,
+    `SELECT COUNT(*) AS openMaintenance
+     FROM maintenance_requests mr
+     INNER JOIN properties p ON p.id = mr.property_id
+     WHERE p.owner_id = ? AND mr.status <> 'closed'`,
+    [ownerId],
+  );
+
+  return {
+    role: 'owner',
+    properties: Number(propertyRow?.propertiesCount || 0),
+    activeContracts: Number(contractRow?.activeContracts || 0),
+    totalRevenue: Number(revenueRow?.totalRevenue || 0),
+    openMaintenance: Number(maintenanceRow?.openMaintenance || 0),
+  };
+}
+
+async function buildTenantDashboard(db, tenantId) {
+  const [contractRow] = await queryAll(
+    db,
+    `SELECT
+       SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS activeContracts,
+       SUM(CASE WHEN status IN ('pending_approval', 'approved', 'signed') THEN 1 ELSE 0 END) AS pendingContracts
+     FROM contracts
+     WHERE tenant_id = ?`,
+    [tenantId],
+  );
+  const [paymentsRow] = await queryAll(
+    db,
+    `SELECT COUNT(*) AS paidPayments
+     FROM payments p
+     INNER JOIN contracts c ON c.id = p.contract_id
+     WHERE c.tenant_id = ? AND p.status = 'paid'`,
+    [tenantId],
+  );
+  const [maintenanceRow] = await queryAll(
+    db,
+    `SELECT
+       SUM(CASE WHEN status <> 'closed' THEN 1 ELSE 0 END) AS openMaintenance,
+       SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) AS closedMaintenance
+     FROM maintenance_requests
+     WHERE tenant_id = ?`,
+    [tenantId],
+  );
+  const [notificationsRow] = await queryAll(
+    db,
+    `SELECT COUNT(*) AS unreadNotifications
+     FROM notifications
+     WHERE user_id = ? AND status <> 'read'`,
+    [tenantId],
+  );
+
+  return {
+    role: 'tenant',
+    contracts: {
+      active: Number(contractRow?.activeContracts || 0),
+      pending: Number(contractRow?.pendingContracts || 0),
+    },
+    payments: {
+      paid: Number(paymentsRow?.paidPayments || 0),
+    },
+    maintenance: {
+      open: Number(maintenanceRow?.openMaintenance || 0),
+      closed: Number(maintenanceRow?.closedMaintenance || 0),
+    },
+    notifications: {
+      unread: Number(notificationsRow?.unreadNotifications || 0),
+    },
+  };
+}
+
+async function buildTechnicianDashboard(db, technicianId) {
+  const [workOrderRow] = await queryAll(
+    db,
+    `SELECT
+       SUM(CASE WHEN status = 'assigned' THEN 1 ELSE 0 END) AS assignedOrders,
+       SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) AS inProgressOrders,
+       SUM(CASE WHEN status IN ('completed', 'approved') THEN 1 ELSE 0 END) AS completedOrders
+     FROM work_orders
+     WHERE technician_id = ?`,
+    [technicianId],
+  );
+  const [notificationsRow] = await queryAll(
+    db,
+    `SELECT COUNT(*) AS unreadNotifications
+     FROM notifications
+     WHERE user_id = ? AND status <> 'read'`,
+    [technicianId],
+  );
+
+  return {
+    role: 'technician',
+    workOrders: {
+      assigned: Number(workOrderRow?.assignedOrders || 0),
+      inProgress: Number(workOrderRow?.inProgressOrders || 0),
+      completed: Number(workOrderRow?.completedOrders || 0),
+    },
+    notifications: {
+      unread: Number(notificationsRow?.unreadNotifications || 0),
+    },
+  };
 }
 
 function startServer(port = process.env.PORT || 3000) {
