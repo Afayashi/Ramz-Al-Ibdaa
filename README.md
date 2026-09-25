@@ -95,3 +95,18 @@ POST /auth/oauth/token
 
 - `grant_type=client_credentials`:
   - يتطلب `client_id` و`client_secret` (من متغيرات البيئة `OAUTH_CLIENT_ID` و`OAUTH_CLIENT_SECRET`).
+
+## تدفقات العمليات المترابطة (End-to-End)
+
+- تدفق العقود:
+  - `POST /employees/contracts` (إنشاء عقد بحالة pending_approval)
+  - `PATCH /management/contracts/:id/approve` (اعتماد الإدارة)
+  - `PATCH /tenants/contracts/:id/sign` (توقيع المستأجر)
+  - `PATCH /employees/contracts/:id/activate` (تفعيل العقد وإشعارات المالك/المستأجر)
+
+- تدفق الصيانة:
+  - `POST /tenants/maintenance-requests` (إنشاء طلب)
+  - `POST /employees/maintenance-requests/:id/assign-technician` (تعيين فني + أمر عمل)
+  - `PATCH /technicians/work-orders/:id` (in_progress / completed + تقرير)
+  - `PATCH /employees/maintenance-requests/:id/approve-completion` (اعتماد الإغلاق + إشعارات)
+  - `POST /tenants/maintenance-requests/:id/rating` (تقييم الخدمة بعد الإغلاق)

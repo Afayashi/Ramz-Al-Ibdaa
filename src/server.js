@@ -296,6 +296,31 @@ function createApp(options = {}) {
     }
   });
 
+  app.post('/employees/units', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), async (req, res) => {
+    const { propertyId, unitNumber, unitType, rentAmount } = req.body || {};
+    if (!propertyId || !unitNumber) {
+      res.status(400).json({ error: 'propertyId and unitNumber are required' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const result = await runStatement(
+        db,
+        'INSERT INTO units (property_id, unit_number, unit_type, rent_amount, occupancy_status) VALUES (?, ?, ?, ?, ?)',
+        [propertyId, unitNumber, unitType || null, rentAmount || null, 'vacant'],
+      );
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
+        [req.user.sub, 'UNIT_CREATE', 'units', String(result.lastID)],
+      );
+      res.status(201).json({ unitId: result.lastID });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
   app.post('/employees/contracts', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), async (req, res) => {
     const { unitId, ownerId, tenantId, startDate, endDate } = req.body || {};
     if (!unitId || !ownerId || !tenantId || !startDate || !endDate) {
@@ -307,8 +332,8 @@ function createApp(options = {}) {
     try {
       const result = await runStatement(
         db,
-        'INSERT INTO contracts (unit_id, owner_id, tenant_id, start_date, end_date) VALUES (?, ?, ?, ?, ?)',
-        [unitId, ownerId, tenantId, startDate, endDate],
+        'INSERT INTO contracts (unit_id, owner_id, tenant_id, start_date, end_date, status) VALUES (?, ?, ?, ?, ?, ?)',
+        [unitId, ownerId, tenantId, startDate, endDate, 'pending_approval'],
       );
       await runStatement(
         db,
@@ -316,6 +341,104 @@ function createApp(options = {}) {
         [req.user.sub, 'CONTRACT_CREATE', 'contracts', String(result.lastID)],
       );
       res.status(201).json({ contractId: result.lastID });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.patch('/management/contracts/:id/approve', authenticateJwt, requireRoles(['system_admin', 'operations_manager']), async (req, res) => {
+    const contractId = req.params.id;
+    const db = openDb(dbPath);
+    try {
+      const contracts = await queryAll(db, 'SELECT id, status FROM contracts WHERE id = ? LIMIT 1', [contractId]);
+      const contract = contracts[0];
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
+      if (contract.status !== 'pending_approval') {
+        res.status(400).json({ error: 'Contract is not pending approval' });
+        return;
+      }
+
+      await runStatement(db, 'UPDATE contracts SET status = ? WHERE id = ?', ['approved', contractId]);
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
+        [req.user.sub, 'CONTRACT_APPROVE', 'contracts', String(contractId)],
+      );
+      res.json({ contractId: Number(contractId), status: 'approved' });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.patch('/tenants/contracts/:id/sign', authenticateJwt, requireRoles(['tenant']), async (req, res) => {
+    const contractId = req.params.id;
+    const db = openDb(dbPath);
+    try {
+      const contracts = await queryAll(
+        db,
+        'SELECT id, tenant_id, status FROM contracts WHERE id = ? AND tenant_id = ? LIMIT 1',
+        [contractId, req.user.sub],
+      );
+      const contract = contracts[0];
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found for this tenant' });
+        return;
+      }
+      if (!['approved', 'pending_signature'].includes(contract.status)) {
+        res.status(400).json({ error: 'Contract is not ready for signature' });
+        return;
+      }
+
+      await runStatement(db, 'UPDATE contracts SET status = ? WHERE id = ?', ['signed', contractId]);
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
+        [req.user.sub, 'CONTRACT_SIGN', 'contracts', String(contractId)],
+      );
+      res.json({ contractId: Number(contractId), status: 'signed' });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.patch('/employees/contracts/:id/activate', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), async (req, res) => {
+    const contractId = req.params.id;
+    const db = openDb(dbPath);
+    try {
+      const contracts = await queryAll(
+        db,
+        'SELECT id, owner_id, tenant_id, status FROM contracts WHERE id = ? LIMIT 1',
+        [contractId],
+      );
+      const contract = contracts[0];
+      if (!contract) {
+        res.status(404).json({ error: 'Contract not found' });
+        return;
+      }
+      if (contract.status !== 'signed') {
+        res.status(400).json({ error: 'Contract must be signed before activation' });
+        return;
+      }
+
+      await runStatement(db, 'UPDATE contracts SET status = ? WHERE id = ?', ['active', contractId]);
+      await runStatement(
+        db,
+        `INSERT INTO notifications (user_id, channel, subject, body, status) VALUES
+         (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+        [
+          contract.tenant_id, 'in_app', 'تفعيل العقد', 'تم تفعيل عقد الإيجار الخاص بك.', 'queued',
+          contract.owner_id, 'in_app', 'تفعيل العقد', 'تم تفعيل عقد إيجار جديد لعقارك.', 'queued',
+        ],
+      );
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
+        [req.user.sub, 'CONTRACT_ACTIVATE', 'contracts', String(contractId)],
+      );
+      res.json({ contractId: Number(contractId), status: 'active' });
     } finally {
       await closeDb(db);
     }
@@ -366,6 +489,188 @@ function createApp(options = {}) {
         [req.user.sub, 'MAINTENANCE_REQUEST_CREATE', 'maintenance_requests', String(result.lastID)],
       );
       res.status(201).json({ maintenanceRequestId: result.lastID });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.post('/employees/maintenance-requests/:id/assign-technician', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), async (req, res) => {
+    const requestId = req.params.id;
+    const { technicianId } = req.body || {};
+    if (!technicianId) {
+      res.status(400).json({ error: 'technicianId is required' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const requests = await queryAll(
+        db,
+        `SELECT mr.id, mr.property_id, mr.tenant_id, p.owner_id
+         FROM maintenance_requests mr
+         INNER JOIN properties p ON p.id = mr.property_id
+         WHERE mr.id = ? LIMIT 1`,
+        [requestId],
+      );
+      const maintenanceRequest = requests[0];
+      if (!maintenanceRequest) {
+        res.status(404).json({ error: 'Maintenance request not found' });
+        return;
+      }
+
+      const workOrderResult = await runStatement(
+        db,
+        'INSERT INTO work_orders (maintenance_request_id, technician_id, status, notes) VALUES (?, ?, ?, ?)',
+        [requestId, technicianId, 'assigned', 'Assigned by employee'],
+      );
+      await runStatement(
+        db,
+        'UPDATE maintenance_requests SET technician_id = ?, status = ? WHERE id = ?',
+        [technicianId, 'assigned', requestId],
+      );
+      await runStatement(
+        db,
+        `INSERT INTO notifications (user_id, channel, subject, body, status) VALUES
+         (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+        [
+          technicianId, 'in_app', 'أمر عمل جديد', 'تم تعيين طلب صيانة جديد لك.', 'queued',
+          maintenanceRequest.owner_id, 'in_app', 'تحديث صيانة', 'تم تعيين فني لمعالجة طلب الصيانة.', 'queued',
+        ],
+      );
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, metadata) VALUES (?, ?, ?, ?, ?)',
+        [req.user.sub, 'MAINTENANCE_ASSIGN_TECHNICIAN', 'maintenance_requests', String(requestId), JSON.stringify({ technicianId, workOrderId: workOrderResult.lastID })],
+      );
+      res.status(201).json({ maintenanceRequestId: Number(requestId), workOrderId: workOrderResult.lastID, status: 'assigned' });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.patch('/technicians/work-orders/:id', authenticateJwt, requireRoles(['technician']), async (req, res) => {
+    const workOrderId = req.params.id;
+    const { status, report } = req.body || {};
+    if (!status) {
+      res.status(400).json({ error: 'status is required' });
+      return;
+    }
+    const allowedStatuses = new Set(['in_progress', 'completed']);
+    if (!allowedStatuses.has(status)) {
+      res.status(400).json({ error: 'Unsupported work order status' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        'SELECT id, maintenance_request_id, technician_id FROM work_orders WHERE id = ? LIMIT 1',
+        [workOrderId],
+      );
+      const workOrder = rows[0];
+      if (!workOrder || workOrder.technician_id !== req.user.sub) {
+        res.status(404).json({ error: 'Work order not found for this technician' });
+        return;
+      }
+
+      await runStatement(
+        db,
+        'UPDATE work_orders SET status = ?, notes = ? WHERE id = ?',
+        [status, report || null, workOrderId],
+      );
+      const requestStatus = status === 'completed' ? 'awaiting_employee_approval' : 'in_progress';
+      await runStatement(
+        db,
+        'UPDATE maintenance_requests SET status = ? WHERE id = ?',
+        [requestStatus, workOrder.maintenance_request_id],
+      );
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, metadata) VALUES (?, ?, ?, ?, ?)',
+        [req.user.sub, 'WORK_ORDER_STATUS_UPDATE', 'work_orders', String(workOrderId), JSON.stringify({ status, report: report || null })],
+      );
+      res.json({ workOrderId: Number(workOrderId), status });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.patch('/employees/maintenance-requests/:id/approve-completion', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), async (req, res) => {
+    const requestId = req.params.id;
+    const db = openDb(dbPath);
+    try {
+      const requests = await queryAll(
+        db,
+        `SELECT mr.id, mr.tenant_id, p.owner_id
+         FROM maintenance_requests mr
+         INNER JOIN properties p ON p.id = mr.property_id
+         WHERE mr.id = ? LIMIT 1`,
+        [requestId],
+      );
+      const maintenanceRequest = requests[0];
+      if (!maintenanceRequest) {
+        res.status(404).json({ error: 'Maintenance request not found' });
+        return;
+      }
+
+      await runStatement(db, 'UPDATE maintenance_requests SET status = ? WHERE id = ?', ['closed', requestId]);
+      await runStatement(
+        db,
+        'UPDATE work_orders SET status = ? WHERE maintenance_request_id = ? AND status = ?',
+        ['approved', requestId, 'completed'],
+      );
+      await runStatement(
+        db,
+        `INSERT INTO notifications (user_id, channel, subject, body, status) VALUES
+         (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+        [
+          maintenanceRequest.owner_id, 'in_app', 'إغلاق طلب صيانة', 'تم إغلاق طلب الصيانة بعد الاعتماد.', 'queued',
+          maintenanceRequest.tenant_id, 'in_app', 'تقييم الصيانة', 'يرجى تقييم خدمة الصيانة بعد الإغلاق.', 'queued',
+        ],
+      );
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
+        [req.user.sub, 'MAINTENANCE_CLOSE_APPROVED', 'maintenance_requests', String(requestId)],
+      );
+      res.json({ maintenanceRequestId: Number(requestId), status: 'closed' });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.post('/tenants/maintenance-requests/:id/rating', authenticateJwt, requireRoles(['tenant']), async (req, res) => {
+    const requestId = req.params.id;
+    const { rating, comment } = req.body || {};
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      res.status(400).json({ error: 'rating must be an integer between 1 and 5' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        'SELECT id, tenant_id, status FROM maintenance_requests WHERE id = ? LIMIT 1',
+        [requestId],
+      );
+      const maintenanceRequest = rows[0];
+      if (!maintenanceRequest || maintenanceRequest.tenant_id !== req.user.sub) {
+        res.status(404).json({ error: 'Maintenance request not found for this tenant' });
+        return;
+      }
+      if (maintenanceRequest.status !== 'closed') {
+        res.status(400).json({ error: 'Maintenance request must be closed before rating' });
+        return;
+      }
+
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, metadata) VALUES (?, ?, ?, ?, ?)',
+        [req.user.sub, 'MAINTENANCE_RATE_SERVICE', 'maintenance_requests', String(requestId), JSON.stringify({ rating, comment: comment || null })],
+      );
+      res.status(201).json({ maintenanceRequestId: Number(requestId), rating });
     } finally {
       await closeDb(db);
     }
