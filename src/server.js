@@ -719,6 +719,143 @@ function createApp(options = {}) {
     }
   });
 
+  app.get('/me/notifications', authenticateJwt, async (req, res) => {
+    if (typeof req.user.sub !== 'number') {
+      res.status(403).json({ error: 'User notifications are not available for this token type' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const notifications = await queryAll(
+        db,
+        `SELECT id, channel, subject, body, status, created_at
+         FROM notifications
+         WHERE user_id = ?
+         ORDER BY id DESC
+         LIMIT 100`,
+        [req.user.sub],
+      );
+      res.json({ notifications });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.patch('/me/notifications/:id/read', authenticateJwt, async (req, res) => {
+    if (typeof req.user.sub !== 'number') {
+      res.status(403).json({ error: 'User notifications are not available for this token type' });
+      return;
+    }
+
+    const notificationId = req.params.id;
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        'SELECT id, user_id FROM notifications WHERE id = ? LIMIT 1',
+        [notificationId],
+      );
+      const notification = rows[0];
+      if (!notification || notification.user_id !== req.user.sub) {
+        res.status(404).json({ error: 'Notification not found' });
+        return;
+      }
+
+      await runStatement(db, 'UPDATE notifications SET status = ? WHERE id = ?', ['read', notificationId]);
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
+        [req.user.sub, 'NOTIFICATION_MARK_READ', 'notifications', String(notificationId)],
+      );
+      res.json({ notificationId: Number(notificationId), status: 'read' });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/reports/occupancy', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), async (_req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        `SELECT
+           COUNT(*) AS totalUnits,
+           SUM(CASE WHEN occupancy_status = 'vacant' THEN 1 ELSE 0 END) AS vacantUnits,
+           SUM(CASE WHEN occupancy_status <> 'vacant' THEN 1 ELSE 0 END) AS occupiedUnits
+         FROM units`,
+      );
+      const row = rows[0] || { totalUnits: 0, vacantUnits: 0, occupiedUnits: 0 };
+      const totalUnits = Number(row.totalUnits || 0);
+      const vacantUnits = Number(row.vacantUnits || 0);
+      const occupiedUnits = Number(row.occupiedUnits || 0);
+      const occupancyRate = totalUnits === 0 ? 0 : Number(((occupiedUnits / totalUnits) * 100).toFixed(2));
+      res.json({ totalUnits, vacantUnits, occupiedUnits, occupancyRate });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/reports/contracts-summary', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), async (_req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        `SELECT
+           COUNT(*) AS totalContracts,
+           SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS activeContracts,
+           SUM(CASE WHEN status = 'signed' THEN 1 ELSE 0 END) AS signedContracts,
+           SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approvedContracts,
+           SUM(CASE WHEN status = 'pending_approval' THEN 1 ELSE 0 END) AS pendingApprovalContracts
+         FROM contracts`,
+      );
+      const row = rows[0] || {};
+      res.json({
+        totalContracts: Number(row.totalContracts || 0),
+        activeContracts: Number(row.activeContracts || 0),
+        signedContracts: Number(row.signedContracts || 0),
+        approvedContracts: Number(row.approvedContracts || 0),
+        pendingApprovalContracts: Number(row.pendingApprovalContracts || 0),
+      });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/reports/financial-summary', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), async (_req, res) => {
+    const db = openDb(dbPath);
+    try {
+      const paymentRows = await queryAll(
+        db,
+        `SELECT COALESCE(SUM(amount), 0) AS collectedRent
+         FROM payments
+         WHERE status = 'paid'`,
+      );
+      const revenueRows = await queryAll(
+        db,
+        'SELECT COALESCE(SUM(amount), 0) AS otherRevenue FROM revenues',
+      );
+      const expenseRows = await queryAll(
+        db,
+        'SELECT COALESCE(SUM(amount), 0) AS totalExpenses FROM expenses',
+      );
+
+      const collectedRent = Number(paymentRows[0]?.collectedRent || 0);
+      const otherRevenue = Number(revenueRows[0]?.otherRevenue || 0);
+      const totalExpenses = Number(expenseRows[0]?.totalExpenses || 0);
+      const totalRevenue = collectedRent + otherRevenue;
+      res.json({
+        collectedRent,
+        otherRevenue,
+        totalRevenue,
+        totalExpenses,
+        netIncome: totalRevenue - totalExpenses,
+      });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
   app.post('/auth/oauth/token', async (req, res) => {
     const {
       grant_type: grantType,

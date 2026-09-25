@@ -110,3 +110,14 @@ POST /auth/oauth/token
   - `PATCH /technicians/work-orders/:id` (in_progress / completed + تقرير)
   - `PATCH /employees/maintenance-requests/:id/approve-completion` (اعتماد الإغلاق + إشعارات)
   - `POST /tenants/maintenance-requests/:id/rating` (تقييم الخدمة بعد الإغلاق)
+
+## الإشعارات والتقارير
+
+- الإشعارات:
+  - `GET /me/notifications` (جلب إشعارات المستخدم الحالي)
+  - `PATCH /me/notifications/:id/read` (تعليم الإشعار كمقروء)
+
+- التقارير (للإدارة):
+  - `GET /reports/occupancy` (نسبة الإشغال والوحدات الشاغرة)
+  - `GET /reports/contracts-summary` (ملخص حالات العقود)
+  - `GET /reports/financial-summary` (الإيرادات، المصروفات، وصافي الدخل)
