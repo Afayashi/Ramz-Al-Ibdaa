@@ -42,3 +42,35 @@ npm run db:init
 
 - مسار ملف القاعدة الناتج:
   - `data/property_management.db`
+
+## تشغيل الخادم الخلفي
+
+```bash
+npm run db:init
+npm start
+```
+
+## الأمان المطبق
+
+- تشفير كلمات المرور باستخدام BCrypt.
+- مصادقة JWT بعد التحقق بخطوتين (2FA code).
+- تشفير البيانات الحساسة المخزنة (مثل الهوية والحساب البنكي) باستخدام AES-256-GCM.
+- حماية API عبر:
+  - API Key (`x-api-key`)
+  - JWT access token
+  - Rate Limiting
+- تسجيل العمليات الأمنية في `audit_logs`.
+
+## مسارات التنقل (Navigation Flow)
+
+- نقطة البداية: Splash → Login → توجيه حسب الدور.
+- بوابات مدعومة: الإدارة، الموظف، المالك، المستأجر، الفني.
+- يمكن جلب مخطط التنقل الكامل عبر:
+
+```http
+GET /navigation/flow
+```
+
+مع تمرير:
+- `x-api-key`
+- `Authorization` header مع bearer token
