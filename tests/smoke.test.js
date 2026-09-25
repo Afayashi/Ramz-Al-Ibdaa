@@ -35,3 +35,8 @@ test('README lists all target stakeholder groups', () => {
     assert.match(content, new RegExp(`^${group}$`, 'm'));
   }
 });
+
+test('package.json uses Node built-in test runner', () => {
+  const packageJson = JSON.parse(readFileSync('package.json', 'utf8'));
+  assert.equal(packageJson.scripts.test, 'node --test');
+});
