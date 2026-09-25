@@ -1,0 +1,198 @@
+{
+  "folders": [
+    {
+      "name": "🖥 backend (NestJS)",
+      "path": "backend"
+    },
+    {
+      "name": "📱 mobile (Flutter)",
+      "path": "mobile"
+    },
+    {
+      "name": "📄 docs & deploy",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "editor.formatOnSave": true,
+    "files.eol": "\n",
+    "typescript.tsdk": "backend/node_modules/typescript/lib",
+    "[prisma]": {
+      "editor.defaultFormatter": "Prisma.prisma"
+    },
+    "[dart]": {
+      "editor.defaultFormatter": "Dart-Code.dart-code",
+      "editor.rulers": [
+        160
+      ]
+    },
+    "dart.lineLength": 160,
+    "files.exclude": {
+      "**/node_modules": true,
+      "**/dist": true,
+      "**/.dart_tool": true,
+      "**/build": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "Prisma.prisma",
+      "dbaeumer.vscode-eslint",
+      "esbenp.prettier-vscode",
+      "Dart-Code.flutter",
+      "Dart-Code.dart-code",
+      "ms-azuretools.vscode-docker",
+      "humao.rest-client",
+      "mikestead.dotenv",
+      "github.vscode-github-actions"
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "1 · DB: start PostgreSQL (Docker)",
+        "type": "shell",
+        "command": "docker compose up -d db",
+        "options": {
+          "cwd": "${workspaceFolder:📄 docs & deploy}"
+        },
+        "problemMatcher": []
+      },
+      {
+        "label": "2 · Backend: install",
+        "type": "shell",
+        "command": "npm install",
+        "options": {
+          "cwd": "${workspaceFolder:🖥 backend (NestJS)}"
+        },
+        "problemMatcher": []
+      },
+      {
+        "label": "3 · Backend: migrate + seed + demo",
+        "type": "shell",
+        "command": "npx prisma migrate dev -n init && npx prisma db seed && npm run seed:demo",
+        "options": {
+          "cwd": "${workspaceFolder:🖥 backend (NestJS)}"
+        },
+        "problemMatcher": []
+      },
+      {
+        "label": "4 · Backend: dev server",
+        "type": "shell",
+        "command": "npm run start:dev",
+        "isBackground": true,
+        "options": {
+          "cwd": "${workspaceFolder:🖥 backend (NestJS)}"
+        },
+        "problemMatcher": "$tsc-watch"
+      },
+      {
+        "label": "Backend: typecheck",
+        "type": "shell",
+        "command": "npm run typecheck",
+        "options": {
+          "cwd": "${workspaceFolder:🖥 backend (NestJS)}"
+        },
+        "problemMatcher": "$tsc",
+        "group": "build"
+      },
+      {
+        "label": "Backend: tests",
+        "type": "shell",
+        "command": "npm test",
+        "options": {
+          "cwd": "${workspaceFolder:🖥 backend (NestJS)}"
+        },
+        "problemMatcher": [],
+        "group": "test"
+      },
+      {
+        "label": "Backend: Prisma Studio",
+        "type": "shell",
+        "command": "npx prisma studio",
+        "isBackground": true,
+        "options": {
+          "cwd": "${workspaceFolder:🖥 backend (NestJS)}"
+        },
+        "problemMatcher": []
+      },
+      {
+        "label": "Mobile: pub get",
+        "type": "shell",
+        "command": "flutter pub get",
+        "options": {
+          "cwd": "${workspaceFolder:📱 mobile (Flutter)}"
+        },
+        "problemMatcher": []
+      },
+      {
+        "label": "Mobile: analyze",
+        "type": "shell",
+        "command": "flutter analyze",
+        "options": {
+          "cwd": "${workspaceFolder:📱 mobile (Flutter)}"
+        },
+        "problemMatcher": []
+      },
+      {
+        "label": "Smoke test",
+        "type": "shell",
+        "command": "bash scripts/smoke.sh",
+        "options": {
+          "cwd": "${workspaceFolder:📄 docs & deploy}"
+        },
+        "problemMatcher": []
+      }
+    ]
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Backend: debug (NestJS)",
+        "type": "node",
+        "request": "launch",
+        "runtimeExecutable": "npm",
+        "runtimeArgs": [
+          "run",
+          "start:dev"
+        ],
+        "cwd": "${workspaceFolder:🖥 backend (NestJS)}",
+        "console": "integratedTerminal",
+        "skipFiles": [
+          "<node_internals>/**"
+        ]
+      },
+      {
+        "name": "Mobile: Android emulator",
+        "type": "dart",
+        "request": "launch",
+        "program": "lib/main.dart",
+        "cwd": "${workspaceFolder:📱 mobile (Flutter)}",
+        "args": [
+          "--dart-define=API_URL=http://10.0.2.2:3000/api"
+        ]
+      },
+      {
+        "name": "Mobile: iOS simulator / web",
+        "type": "dart",
+        "request": "launch",
+        "program": "lib/main.dart",
+        "cwd": "${workspaceFolder:📱 mobile (Flutter)}",
+        "args": [
+          "--dart-define=API_URL=http://localhost:3000/api"
+        ]
+      }
+    ],
+    "compounds": [
+      {
+        "name": "Full stack (API + Android)",
+        "configurations": [
+          "Backend: debug (NestJS)",
+          "Mobile: Android emulator"
+        ]
+      }
+    ]
+  }
+}

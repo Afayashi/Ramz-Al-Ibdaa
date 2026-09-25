@@ -1,0 +1,486 @@
+generator client { provider = "prisma-client-js" }
+datasource db { provider = "postgresql"  url = env("DATABASE_URL") }
+
+enum UserStatus { ACTIVE SUSPENDED }
+
+model User {
+  id             String      @id @default(uuid())
+  fullName       String
+  email          String      @unique
+  phone          String      @unique
+  passwordHash   String
+  status         UserStatus  @default(ACTIVE)
+  failedAttempts Int         @default(0)
+  lockedUntil    DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  roles          UserRole[]
+  refreshTokens  RefreshToken[]
+  otps           OtpCode[]
+  auditLogs      AuditLog[]
+  ownerProfile   Owner?
+  tenantProfile  Tenant?        @relation("TenantUser")
+  workOrders     MaintenanceRequest[] @relation("Technician")
+  tasks          Task[]               @relation("TaskAssignee")
+  notifications  Notification[]
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  code        String           @unique   // admin, employee, accountant, owner, tenant, technician
+  nameAr      String
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id    String           @id @default(uuid())
+  code  String           @unique   // e.g. users.read, properties.write
+  roles RolePermission[]
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@id([roleId, permissionId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+model OtpCode {
+  id        String   @id @default(uuid())
+  userId    String
+  purpose   String   // login | reset
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int      @default(0)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, purpose])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String   // LOGIN_SUCCESS, LOGIN_FAILED, ACCOUNT_LOCKED, LOGOUT, PASSWORD_CHANGED ...
+  ip        String?
+  userAgent String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+  @@index([userId, createdAt])
+}
+
+enum PropertyType { VILLA APARTMENT_BUILDING TOWER OFFICE_BUILDING COMMERCIAL WAREHOUSE COMPOUND LAND }
+enum UnitType { APARTMENT VILLA OFFICE SHOP WAREHOUSE STUDIO }
+enum UnitStatus { AVAILABLE RENTED RESERVED MAINTENANCE }
+
+// Minimal owner record; extended (IBAN, bank accounts, documents) in Sprint 3
+enum PartyKind { INDIVIDUAL COMPANY }
+
+model Owner {
+  id           String        @id @default(uuid())
+  kind         PartyKind     @default(INDIVIDUAL)
+  fullName     String
+  nationalId   String        @unique       // national ID / iqama / CR number
+  phone        String
+  email        String?
+  city         String?
+  address      String?
+  commissionPct Decimal      @default(5) @db.Decimal(5, 2)   // management fee
+  userId       String?       @unique
+  user         User?         @relation(fields: [userId], references: [id])
+  properties   Property[]
+  bankAccounts BankAccount[]
+  archivedAt   DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model BankAccount {
+  id          String   @id @default(uuid())
+  ownerId     String
+  owner       Owner    @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  bankName    String
+  holderName  String
+  iban        String   @unique
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model Tenant {
+  id          String    @id @default(uuid())
+  kind        PartyKind @default(INDIVIDUAL)
+  fullName    String
+  nationalId  String    @unique       // TC-TEN-002
+  idExpiry    DateTime?
+  nationality String?
+  phone       String
+  email       String?
+  employer    String?
+  emergencyName  String?
+  emergencyPhone String?
+  userId      String?   @unique
+  user        User?     @relation("TenantUser", fields: [userId], references: [id])
+  contracts   Contract[]
+  maintenance MaintenanceRequest[]
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+enum AttachmentEntity { OWNER TENANT PROPERTY UNIT CONTRACT }
+enum AttachmentCategory { NATIONAL_ID DEED CONTRACT RECEIPT REPORT HANDOVER OTHER }
+
+model Attachment {
+  id         String             @id @default(uuid())
+  entityType AttachmentEntity
+  entityId   String
+  category   AttachmentCategory @default(OTHER)
+  fileName   String
+  url        String
+  mimeType   String
+  size       Int
+  uploadedBy String
+  archivedAt DateTime?
+  createdAt  DateTime           @default(now())
+  @@index([entityType, entityId])
+}
+
+model Property {
+  id          String          @id @default(uuid())
+  code        String          @unique          // TC-PRO-003
+  name        String
+  type        PropertyType
+  ownerId     String                           // TC-PRO-002: required
+  owner       Owner           @relation(fields: [ownerId], references: [id])
+  city        String
+  district    String?
+  address     String?
+  latitude    Float?
+  longitude   Float?
+  deedNumber  String?
+  amenities   String[]        @default([])
+  description String?
+  images      PropertyImage[]
+  units       Unit[]
+  archivedAt  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  @@index([ownerId])
+  @@index([city])
+}
+
+model PropertyImage {
+  id         String   @id @default(uuid())
+  propertyId String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  url        String
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+}
+
+model Unit {
+  id         String     @id @default(uuid())
+  propertyId String
+  property   Property   @relation(fields: [propertyId], references: [id])
+  number     String
+  type       UnitType
+  floor      Int?
+  area       Float
+  rooms      Int        @default(0)
+  bathrooms  Int        @default(0)
+  annualRent Decimal    @db.Decimal(12, 2)
+  status     UnitStatus @default(AVAILABLE)
+  notes      String?
+  archivedAt DateTime?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  statusLog  UnitStatusLog[]
+  contracts  Contract[]
+  maintenance MaintenanceRequest[]
+  @@unique([propertyId, number])
+  @@index([status])
+}
+
+model UnitStatusLog {
+  id        String     @id @default(uuid())
+  unitId    String
+  unit      Unit       @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  from      UnitStatus
+  to        UnitStatus
+  byUserId  String
+  reason    String?
+  createdAt DateTime   @default(now())
+}
+
+// ───── Sprint 4: Contracts ─────
+enum ContractStatus { DRAFT PENDING_APPROVAL ACTIVE EXPIRED TERMINATED CANCELLED }
+enum PaymentFrequency { MONTHLY QUARTERLY SEMI_ANNUAL ANNUAL }
+enum InstallmentStatus { PENDING PAID OVERDUE CANCELLED }
+
+model Contract {
+  id            String           @id @default(uuid())
+  code          String           @unique            // CT-2026-00001
+  unitId        String
+  unit          Unit             @relation(fields: [unitId], references: [id])
+  tenantId      String
+  tenant        Tenant           @relation(fields: [tenantId], references: [id])
+  startDate     DateTime         @db.Date
+  endDate       DateTime         @db.Date
+  annualRent    Decimal          @db.Decimal(12, 2)
+  frequency     PaymentFrequency @default(QUARTERLY)
+  deposit       Decimal          @default(0) @db.Decimal(12, 2)
+  vatPct        Decimal          @default(0) @db.Decimal(5, 2)   // 15 for commercial units
+  ejarNumber    String?          @unique
+  notes         String?
+  status        ContractStatus   @default(DRAFT)
+  renewedFromId String?          @unique
+  renewedFrom   Contract?        @relation("Renewal", fields: [renewedFromId], references: [id])
+  renewedTo     Contract?        @relation("Renewal")
+  createdById   String
+  approvedById  String?
+  approvedAt    DateTime?
+  terminatedAt  DateTime?
+  terminationReason String?
+  installments  Installment[]
+  statusLog     ContractStatusLog[]
+  payments      Payment[]
+  handovers     Handover[]
+  archivedAt    DateTime?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  @@index([unitId, status])
+  @@index([tenantId])
+  @@index([endDate])
+}
+
+model Installment {
+  id         String            @id @default(uuid())
+  contractId String
+  contract   Contract          @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  seq        Int
+  dueDate    DateTime          @db.Date
+  amount     Decimal           @db.Decimal(12, 2)
+  vat        Decimal           @default(0) @db.Decimal(12, 2)
+  total      Decimal           @db.Decimal(12, 2)
+  paidAmount Decimal           @default(0) @db.Decimal(12, 2)
+  status     InstallmentStatus @default(PENDING)
+  paidAt     DateTime?
+  payments   Payment[]
+  @@unique([contractId, seq])
+  @@index([dueDate, status])
+}
+
+model ContractStatusLog {
+  id         String         @id @default(uuid())
+  contractId String
+  contract   Contract       @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  from       ContractStatus
+  to         ContractStatus
+  byUserId   String
+  reason     String?
+  createdAt  DateTime       @default(now())
+}
+
+// ───── Sprint 5: Payments ─────
+enum PaymentMethod { CASH BANK_TRANSFER MADA SADAD CHEQUE }
+
+model Payment {
+  id            String        @id @default(uuid())
+  receiptNo     String        @unique          // RC-2026-000001
+  contractId    String
+  contract      Contract      @relation(fields: [contractId], references: [id])
+  installmentId String
+  installment   Installment   @relation(fields: [installmentId], references: [id])
+  amount        Decimal       @db.Decimal(12, 2)
+  method        PaymentMethod
+  reference     String?                        // transfer / cheque / SADAD number
+  paidAt        DateTime
+  receivedById  String
+  notes         String?
+  voidedAt      DateTime?
+  voidedById    String?
+  voidReason    String?
+  createdAt     DateTime      @default(now())
+  @@index([contractId])
+  @@index([paidAt])
+}
+
+// ───── Sprint 6: Handover (استلام وتسليم) ─────
+enum HandoverType { MOVE_IN MOVE_OUT }
+enum HandoverStatus { DRAFT SIGNED }
+
+model Handover {
+  id            String         @id @default(uuid())
+  contractId    String
+  contract      Contract       @relation(fields: [contractId], references: [id])
+  type          HandoverType
+  status        HandoverStatus @default(DRAFT)
+  items         Json           // [{ area, condition: GOOD|FAIR|DAMAGED, note }]
+  electricity   Float?
+  water         Float?
+  keysCount     Int            @default(0)
+  deductions    Json           @default("[]")   // MOVE_OUT: [{ label, amount }]
+  depositRefund Decimal?       @db.Decimal(12, 2)
+  notes         String?
+  inspectedById String
+  signedAt      DateTime?
+  signedById    String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  @@unique([contractId, type])
+}
+
+// ───── Sprint 7: Maintenance & work orders ─────
+enum MaintCategory { PLUMBING ELECTRICAL AC CARPENTRY PAINTING APPLIANCE CLEANING OTHER }
+enum MaintPriority { LOW MEDIUM HIGH URGENT }
+enum MaintStatus { NEW ASSIGNED IN_PROGRESS WAITING_PARTS COMPLETED CLOSED CANCELLED }
+enum ChargeTo { OWNER TENANT NONE }
+
+model MaintenanceRequest {
+  id            String        @id @default(uuid())
+  code          String        @unique           // MR-2026-00001
+  unitId        String
+  unit          Unit          @relation(fields: [unitId], references: [id])
+  tenantId      String?
+  tenant        Tenant?       @relation(fields: [tenantId], references: [id])
+  category      MaintCategory
+  priority      MaintPriority @default(MEDIUM)
+  title         String
+  description   String
+  status        MaintStatus   @default(NEW)
+  dueAt         DateTime                        // SLA deadline from priority
+  technicianId  String?
+  technician    User?         @relation("Technician", fields: [technicianId], references: [id])
+  scheduledAt   DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  workReport    String?
+  partsNote     String?
+  cost          Decimal       @default(0) @db.Decimal(12, 2)
+  chargeTo      ChargeTo      @default(OWNER)
+  rating        Int?
+  ratingComment String?
+  createdById   String
+  log           MaintenanceLog[]
+  photos        MaintenancePhoto[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  @@index([status])
+  @@index([technicianId, status])
+  @@index([unitId])
+}
+
+model MaintenanceLog {
+  id        String             @id @default(uuid())
+  requestId String
+  request   MaintenanceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  from      MaintStatus?
+  to        MaintStatus
+  byUserId  String
+  note      String?
+  createdAt DateTime           @default(now())
+}
+
+// ───── Sprint 9: Notifications ─────
+model Notification {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type       String    // CONTRACT | PAYMENT | MAINTENANCE | HANDOVER | SYSTEM
+  title      String
+  body       String
+  entityType String?
+  entityId   String?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now())
+  @@index([userId, readAt])
+}
+
+// ───── Sprint 8: Tasks ─────
+enum TaskStatus { TODO IN_PROGRESS DONE CANCELLED }
+
+model Task {
+  id          String        @id @default(uuid())
+  title       String
+  description String?
+  assigneeId  String
+  assignee    User          @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  createdById String
+  priority    MaintPriority @default(MEDIUM)
+  status      TaskStatus    @default(TODO)
+  dueAt       DateTime?
+  entityType  String?       // CONTRACT | MAINTENANCE | PROPERTY | UNIT
+  entityId    String?
+  completedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  @@index([assigneeId, status])
+  @@unique([entityType, entityId, title])   // idempotent auto-tasks
+}
+
+// ───── Sprint 11: External integrations ─────
+enum EventStatus { RECEIVED PROCESSED FAILED IGNORED }
+enum Channel { SMS EMAIL PUSH }
+enum OutStatus { QUEUED SENT FAILED SKIPPED }
+
+model IntegrationEvent {
+  id          String      @id @default(uuid())
+  provider    String      // gateway | ejar | sms
+  eventId     String      // provider's event id → idempotency
+  type        String
+  payload     Json
+  status      EventStatus @default(RECEIVED)
+  error       String?
+  attempts    Int         @default(0)
+  createdAt   DateTime    @default(now())
+  processedAt DateTime?
+  @@unique([provider, eventId])
+  @@index([status, createdAt])
+}
+
+model OutboundMessage {
+  id          String    @id @default(uuid())
+  channel     Channel
+  to          String
+  body        String
+  status      OutStatus @default(QUEUED)
+  providerRef String?
+  error       String?
+  attempts    Int       @default(0)
+  createdAt   DateTime  @default(now())
+  sentAt      DateTime?
+  @@index([status])
+}
+
+enum PhotoStage { BEFORE AFTER }
+model MaintenancePhoto {
+  id         String             @id @default(uuid())
+  requestId  String
+  request    MaintenanceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  url        String
+  stage      PhotoStage         @default(BEFORE)
+  uploadedBy String
+  createdAt  DateTime           @default(now())
+  @@index([requestId])
+}

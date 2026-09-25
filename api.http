@@ -1,0 +1,40 @@
+### Property ERP — اختبار سريع من VS Code (إضافة REST Client) — اضغط «Send Request»
+@base = http://localhost:3000/api
+@token = ضع_التوكن_هنا
+
+### صحة الخادم
+GET {{base}}/health
+
+### تسجيل الدخول (يعيد otpToken)
+POST {{base}}/auth/login
+Content-Type: application/json
+
+{ "identifier": "admin@erp.local", "password": "Admin@12345" }
+
+### التحقق من الرمز (الرمز يظهر في سجل الخادم في وضع التطوير)
+POST {{base}}/auth/verify-otp
+Content-Type: application/json
+
+{ "otpToken": "…", "code": "123456" }
+
+### لوحة المؤشرات
+GET {{base}}/reports/dashboard
+Authorization: Bearer {{token}}
+
+### العقود
+GET {{base}}/contracts
+Authorization: Bearer {{token}}
+
+### معاينة الأقساط
+POST {{base}}/contracts/preview
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "startDate": "2026-01-01", "endDate": "2026-12-31", "annualRent": 60000, "frequency": "QUARTERLY" }
+
+### رابط طباعة سند
+POST {{base}}/documents/link
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "type": "receipt", "id": "<payment-id>" }
