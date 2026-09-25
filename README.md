@@ -74,3 +74,24 @@ GET /navigation/flow
 مع تمرير:
 - `x-api-key`
 - `Authorization` header مع bearer token
+
+ولإرجاع المسار الخاص بدور المستخدم فقط:
+
+```http
+GET /navigation/portal
+```
+
+## OAuth 2.0 (مبدئي وعملي)
+
+- يدعم endpoint التالي:
+
+```http
+POST /auth/oauth/token
+```
+
+- `grant_type=password`:
+  - الخطوة 1: إرسال `username` و`password` وسيُعاد `two_factor_required` مع `challenge_id`.
+  - الخطوة 2: إعادة الطلب مع `challenge_id` و`otp_code` للحصول على `access_token`.
+
+- `grant_type=client_credentials`:
+  - يتطلب `client_id` و`client_secret` (من متغيرات البيئة `OAUTH_CLIENT_ID` و`OAUTH_CLIENT_SECRET`).

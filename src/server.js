@@ -20,6 +20,7 @@ const {
 const { NAVIGATION_FLOW } = require('./navigation/flow');
 
 const TWO_FACTOR_TTL_MINUTES = 10;
+const TOKEN_EXPIRES_IN_SECONDS = 3600;
 
 function createApp(options = {}) {
   const dbPath = options.dbPath || process.env.DB_PATH || DEFAULT_DB_PATH;
@@ -165,22 +166,15 @@ function createApp(options = {}) {
           return;
         }
 
-        const code = generateOtpCode();
-        const codeHash = await hashPassword(code);
-        const challengeResult = await runStatement(
-          db,
-          `INSERT INTO two_factor_challenges (user_id, code_hash, expires_at)
-           VALUES (?, ?, datetime('now', ?))`,
-          [user.id, codeHash, `+${TWO_FACTOR_TTL_MINUTES} minutes`],
-        );
+        const { challengeId, code } = await createTwoFactorChallenge(db, user.id);
 
         await runStatement(
           db,
           'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
-          [user.id, 'LOGIN_PASSWORD_OK', 'two_factor_challenges', String(challengeResult.lastID)],
+          [user.id, 'LOGIN_PASSWORD_OK', 'two_factor_challenges', String(challengeId)],
         );
 
-        const response = { challengeId: challengeResult.lastID, twoFactorRequired: true };
+        const response = { challengeId, twoFactorRequired: true };
         if (process.env.NODE_ENV === 'test') {
           response.testCode = code;
         }
@@ -258,6 +252,22 @@ function createApp(options = {}) {
     res.json({
       role: req.user.role,
       flow: NAVIGATION_FLOW,
+    });
+  });
+
+  app.get('/navigation/portal', authenticateJwt, (req, res) => {
+    const portalKey = resolvePortalForRole(req.user.role);
+    if (!portalKey) {
+      res.status(403).json({ error: 'No portal mapping for this role' });
+      return;
+    }
+
+    res.json({
+      role: req.user.role,
+      portal: portalKey,
+      entry: NAVIGATION_FLOW.entry,
+      portalFlow: NAVIGATION_FLOW.portals[portalKey],
+      workflows: NAVIGATION_FLOW.workflows,
     });
   });
 
@@ -404,10 +414,118 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/auth/oauth/token', (_req, res) => {
-    res.status(501).json({
-      error: 'OAuth2 authorization server is not enabled yet',
-    });
+  app.post('/auth/oauth/token', async (req, res) => {
+    const {
+      grant_type: grantType,
+      username,
+      password,
+      challenge_id: challengeId,
+      otp_code: otpCode,
+      client_id: clientId,
+      client_secret: clientSecret,
+    } = req.body || {};
+
+    if (grantType === 'client_credentials') {
+      const expectedClientId = process.env.OAUTH_CLIENT_ID || 'default-client';
+      const expectedClientSecret = process.env.OAUTH_CLIENT_SECRET || 'default-secret';
+      if (clientId !== expectedClientId || clientSecret !== expectedClientSecret) {
+        res.status(401).json({ error: 'invalid_client' });
+        return;
+      }
+
+      const token = createToken({
+        id: `service:${clientId}`,
+        email: `${clientId}@service.local`,
+        role: 'oauth_client',
+      });
+      res.json({
+        access_token: token,
+        token_type: 'Bearer',
+        expires_in: TOKEN_EXPIRES_IN_SECONDS,
+      });
+      return;
+    }
+
+    if (grantType !== 'password') {
+      res.status(400).json({ error: 'unsupported_grant_type' });
+      return;
+    }
+
+    if (!username || !password) {
+      res.status(400).json({ error: 'invalid_request' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const users = await queryAll(db, 'SELECT * FROM users WHERE email = ? LIMIT 1', [
+        username.toLowerCase(),
+      ]);
+      const user = users[0];
+      if (!user || !user.password_hash) {
+        res.status(401).json({ error: 'invalid_grant' });
+        return;
+      }
+
+      const isValid = await verifyPassword(password, user.password_hash);
+      if (!isValid) {
+        res.status(401).json({ error: 'invalid_grant' });
+        return;
+      }
+
+      if (!challengeId || !otpCode) {
+        const { challengeId: generatedChallengeId, code } = await createTwoFactorChallenge(db, user.id);
+        const payload = {
+          error: 'two_factor_required',
+          challenge_id: generatedChallengeId,
+        };
+        if (process.env.NODE_ENV === 'test') {
+          payload.testCode = code;
+        }
+        res.status(401).json(payload);
+        return;
+      }
+
+      const challenges = await queryAll(
+        db,
+        `SELECT id, user_id, code_hash
+         FROM two_factor_challenges
+         WHERE id = ?
+           AND user_id = ?
+           AND consumed_at IS NULL
+           AND datetime(expires_at) >= datetime('now')
+         LIMIT 1`,
+        [challengeId, user.id],
+      );
+      const challenge = challenges[0];
+      if (!challenge) {
+        res.status(401).json({ error: 'invalid_grant' });
+        return;
+      }
+
+      const otpMatches = await verifyPassword(otpCode, challenge.code_hash);
+      if (!otpMatches) {
+        res.status(401).json({ error: 'invalid_grant' });
+        return;
+      }
+
+      await runStatement(db, 'UPDATE two_factor_challenges SET consumed_at = CURRENT_TIMESTAMP WHERE id = ?', [
+        challenge.id,
+      ]);
+
+      const token = createToken({
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      });
+      res.json({
+        access_token: token,
+        token_type: 'Bearer',
+        expires_in: TOKEN_EXPIRES_IN_SECONDS,
+      });
+    } finally {
+      await closeDb(db);
+    }
   });
 
   app.use((error, _req, res, _next) => {
@@ -442,6 +560,37 @@ function requireRoles(allowedRoles) {
     }
     next();
   };
+}
+
+async function createTwoFactorChallenge(db, userId) {
+  const code = generateOtpCode();
+  const codeHash = await hashPassword(code);
+  const challengeResult = await runStatement(
+    db,
+    `INSERT INTO two_factor_challenges (user_id, code_hash, expires_at)
+     VALUES (?, ?, datetime('now', ?))`,
+    [userId, codeHash, `+${TWO_FACTOR_TTL_MINUTES} minutes`],
+  );
+  return { challengeId: challengeResult.lastID, code };
+}
+
+function resolvePortalForRole(role) {
+  if (['system_admin', 'operations_manager', 'financial_auditor'].includes(role)) {
+    return 'management';
+  }
+  if (['leasing_officer', 'collections_officer'].includes(role)) {
+    return 'employee';
+  }
+  if (role === 'owner') {
+    return 'owner';
+  }
+  if (role === 'tenant') {
+    return 'tenant';
+  }
+  if (role === 'technician') {
+    return 'technician';
+  }
+  return null;
 }
 
 function startServer(port = process.env.PORT || 3000) {
