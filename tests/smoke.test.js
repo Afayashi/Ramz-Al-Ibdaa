@@ -6,3 +6,32 @@ test('README includes the main project heading', () => {
   const content = readFileSync('README.md', 'utf8');
   assert.match(content, /^# تطبيق إدارة العقارات الذكي/m);
 });
+
+test('README includes required section headings', () => {
+  const content = readFileSync('README.md', 'utf8');
+  const requiredSections = [
+    '## نبذة عن التطبيق',
+    '## الفئات المستفيدة',
+    '## المتطلبات الأساسية',
+    '## الاختبارات',
+  ];
+
+  for (const section of requiredSections) {
+    assert.match(content, new RegExp(`^${section}$`, 'm'));
+  }
+});
+
+test('README lists all target stakeholder groups', () => {
+  const content = readFileSync('README.md', 'utf8');
+  const groups = [
+    '- إدارة الشركة',
+    '- الموظفون',
+    '- ملاك العقارات',
+    '- المستأجرون',
+    '- الفنيون',
+  ];
+
+  for (const group of groups) {
+    assert.match(content, new RegExp(`^${group}$`, 'm'));
+  }
+});
