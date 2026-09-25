@@ -144,3 +144,12 @@ POST /auth/oauth/token
   "permissions": ["notifications:read:self"]
 }
 ```
+
+## سجل التدقيق الأمني (Audit Log)
+
+- `GET /security/audit-logs`
+  - يدعم الفلاتر: `actorUserId`, `action`, `targetType`, `dateFrom`, `dateTo`
+  - ويدعم pagination: `page`, `limit`
+- `GET /security/audit-logs/summary`
+  - تجميع العمليات حسب `action`
+  - يدعم `dateFrom`, `dateTo`

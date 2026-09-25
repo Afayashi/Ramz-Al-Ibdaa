@@ -31,6 +31,7 @@ const PERMISSION_KEYS = [
   'notifications:read:self',
   'notifications:mark-read:self',
   'reports:view:management',
+  'audit:view',
   'dashboard:view:management',
   'dashboard:view:employee',
   'dashboard:view:owner',
@@ -49,6 +50,7 @@ const ROLE_PERMISSION_MAP = {
     'maintenance:assign',
     'maintenance:approve',
     'reports:view:management',
+    'audit:view',
     'dashboard:view:management',
     'rbac:manage',
   ],
@@ -61,6 +63,7 @@ const ROLE_PERMISSION_MAP = {
     'maintenance:assign',
     'maintenance:approve',
     'reports:view:management',
+    'audit:view',
     'dashboard:view:management',
     'dashboard:view:employee',
     'rbac:manage',
@@ -100,6 +103,7 @@ const ROLE_PERMISSION_MAP = {
   ],
   financial_auditor: [
     'reports:view:management',
+    'audit:view',
     'dashboard:view:management',
   ],
 };

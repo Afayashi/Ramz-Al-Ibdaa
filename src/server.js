@@ -263,18 +263,120 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/security/audit-logs', authenticateJwt, requireRoles(['system_admin', 'financial_auditor']), async (_req, res) => {
-    const db = openDb(dbPath);
-    try {
-      const logs = await queryAll(
-        db,
-        'SELECT id, actor_user_id, action, target_type, target_id, created_at FROM audit_logs ORDER BY id DESC LIMIT 100',
-      );
-      res.json({ logs });
-    } finally {
-      await closeDb(db);
-    }
-  });
+  app.get(
+    '/security/audit-logs',
+    authenticateJwt,
+    requireRoles(['system_admin', 'financial_auditor']),
+    requirePermission('audit:view'),
+    async (req, res) => {
+      const actorUserId = req.query.actorUserId ? Number(req.query.actorUserId) : null;
+      const action = req.query.action ? String(req.query.action) : null;
+      const targetType = req.query.targetType ? String(req.query.targetType) : null;
+      const dateFrom = req.query.dateFrom ? String(req.query.dateFrom) : null;
+      const dateTo = req.query.dateTo ? String(req.query.dateTo) : null;
+      const page = Math.max(1, Number(req.query.page || 1));
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit || 50)));
+      const offset = (page - 1) * limit;
+
+      const whereParts = [];
+      const params = [];
+      if (Number.isInteger(actorUserId) && actorUserId > 0) {
+        whereParts.push('actor_user_id = ?');
+        params.push(actorUserId);
+      }
+      if (action) {
+        whereParts.push('action = ?');
+        params.push(action);
+      }
+      if (targetType) {
+        whereParts.push('target_type = ?');
+        params.push(targetType);
+      }
+      if (dateFrom) {
+        whereParts.push('datetime(created_at) >= datetime(?)');
+        params.push(dateFrom);
+      }
+      if (dateTo) {
+        whereParts.push('datetime(created_at) <= datetime(?)');
+        params.push(dateTo);
+      }
+      const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+      const db = openDb(dbPath);
+      try {
+        const logs = await queryAll(
+          db,
+          `SELECT id, actor_user_id, action, target_type, target_id, metadata, created_at
+           FROM audit_logs
+           ${whereSql}
+           ORDER BY id DESC
+           LIMIT ? OFFSET ?`,
+          [...params, limit, offset],
+        );
+
+        const countRows = await queryAll(
+          db,
+          `SELECT COUNT(*) AS totalCount
+           FROM audit_logs
+           ${whereSql}`,
+          params,
+        );
+        const totalCount = Number(countRows[0]?.totalCount || 0);
+        res.json({
+          page,
+          limit,
+          totalCount,
+          totalPages: Math.ceil(totalCount / limit),
+          logs,
+        });
+      } finally {
+        await closeDb(db);
+      }
+    },
+  );
+
+  app.get(
+    '/security/audit-logs/summary',
+    authenticateJwt,
+    requireRoles(['system_admin', 'financial_auditor']),
+    requirePermission('audit:view'),
+    async (req, res) => {
+      const dateFrom = req.query.dateFrom ? String(req.query.dateFrom) : null;
+      const dateTo = req.query.dateTo ? String(req.query.dateTo) : null;
+      const whereParts = [];
+      const params = [];
+      if (dateFrom) {
+        whereParts.push('datetime(created_at) >= datetime(?)');
+        params.push(dateFrom);
+      }
+      if (dateTo) {
+        whereParts.push('datetime(created_at) <= datetime(?)');
+        params.push(dateTo);
+      }
+      const whereSql = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+      const db = openDb(dbPath);
+      try {
+        const summary = await queryAll(
+          db,
+          `SELECT action, COUNT(*) AS total
+           FROM audit_logs
+           ${whereSql}
+           GROUP BY action
+           ORDER BY total DESC, action ASC`,
+          params,
+        );
+        res.json({
+          summary: summary.map((row) => ({
+            action: row.action,
+            total: Number(row.total || 0),
+          })),
+        });
+      } finally {
+        await closeDb(db);
+      }
+    },
+  );
 
   app.get('/navigation/flow', authenticateJwt, (req, res) => {
     res.json({
