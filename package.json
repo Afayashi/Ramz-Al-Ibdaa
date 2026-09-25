@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "تطبيق إدارة العقارات هو منصة رقمية متكاملة تهدف إلى أتمتة وإدارة جميع العمليات العقارية من مكان واحد، حيث يربط بين إدارة الشركة والموظفين وملاك العقارات والمستأجرين والفنيين عبر نظام موحد يوفر الشفافية وسهولة التواصل وسرعة تنفيذ العمليات التشغيلية والمالية.",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "db:init": "node src/db/initDatabase.js"
   },
   "repository": {
     "type": "git",
@@ -12,5 +13,11 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs"
+  "dependencies": {
+    "sqlite3": "^6.0.1"
+  },
+  "type": "commonjs",
+  "dependencies": {
+    "sqlite3": "^6.0.1"
+  }
 }
