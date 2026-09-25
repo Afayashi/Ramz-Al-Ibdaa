@@ -26,6 +26,34 @@ function createApp(options = {}) {
   const dbPath = options.dbPath || process.env.DB_PATH || DEFAULT_DB_PATH;
   const initialization = initDatabase(dbPath);
   const app = express();
+  const requirePermission = (permissionKey) => async (req, res, next) => {
+    const role = req.user?.role;
+    if (!role) {
+      res.status(401).json({ error: 'Role is required' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        `SELECT 1
+         FROM roles r
+         INNER JOIN role_permissions rp ON rp.role_id = r.id
+         INNER JOIN permissions p ON p.id = rp.permission_id
+         WHERE r.name = ? AND p.key = ?
+         LIMIT 1`,
+        [role, permissionKey],
+      );
+      if (rows.length === 0) {
+        res.status(403).json({ error: `Missing permission: ${permissionKey}` });
+        return;
+      }
+      next();
+    } finally {
+      await closeDb(db);
+    }
+  };
 
   app.use(express.json());
   app.use(
@@ -271,7 +299,91 @@ function createApp(options = {}) {
     });
   });
 
-  app.post('/admin/properties', authenticateJwt, requireRoles(['system_admin', 'operations_manager']), async (req, res) => {
+  app.get(
+    '/admin/permissions',
+    authenticateJwt,
+    requireRoles(['system_admin', 'operations_manager']),
+    requirePermission('rbac:manage'),
+    async (_req, res) => {
+      const db = openDb(dbPath);
+      try {
+        const permissions = await queryAll(
+          db,
+          'SELECT id, key, description FROM permissions ORDER BY key ASC',
+        );
+        res.json({ permissions });
+      } finally {
+        await closeDb(db);
+      }
+    },
+  );
+
+  app.get(
+    '/admin/roles/:roleName/permissions',
+    authenticateJwt,
+    requireRoles(['system_admin', 'operations_manager']),
+    requirePermission('rbac:manage'),
+    async (req, res) => {
+      const roleName = req.params.roleName;
+      const db = openDb(dbPath);
+      try {
+        const permissions = await queryAll(
+          db,
+          `SELECT p.key
+           FROM role_permissions rp
+           INNER JOIN roles r ON r.id = rp.role_id
+           INNER JOIN permissions p ON p.id = rp.permission_id
+           WHERE r.name = ?
+           ORDER BY p.key ASC`,
+          [roleName],
+        );
+        res.json({ role: roleName, permissions: permissions.map((row) => row.key) });
+      } finally {
+        await closeDb(db);
+      }
+    },
+  );
+
+  app.post(
+    '/admin/roles/:roleName/permissions',
+    authenticateJwt,
+    requireRoles(['system_admin', 'operations_manager']),
+    requirePermission('rbac:manage'),
+    async (req, res) => {
+      const roleName = req.params.roleName;
+      const permissions = Array.isArray(req.body?.permissions) ? req.body.permissions : [];
+      if (permissions.length === 0) {
+        res.status(400).json({ error: 'permissions array is required' });
+        return;
+      }
+
+      const db = openDb(dbPath);
+      try {
+        for (const permissionKey of permissions) {
+          await runStatement(
+            db,
+            `INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+             SELECT r.id, p.id
+             FROM roles r
+             INNER JOIN permissions p ON p.key = ?
+             WHERE r.name = ?`,
+            [permissionKey, roleName],
+          );
+        }
+        await runStatement(
+          db,
+          'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, metadata) VALUES (?, ?, ?, ?, ?)',
+          [req.user.sub, 'RBAC_ROLE_PERMISSION_ASSIGN', 'roles', roleName, JSON.stringify({ permissions })],
+        );
+
+        res.status(201).json({ role: roleName, permissionsAssigned: permissions });
+      } finally {
+        await closeDb(db);
+      }
+    },
+  );
+
+  app.post('/admin/properties', authenticateJwt, requireRoles(['system_admin', 'operations_manager']), requirePermission('properties:create'), async (req, res) => {
     const { ownerId, propertyName, address } = req.body || {};
     if (!ownerId || !propertyName || !address) {
       res.status(400).json({ error: 'ownerId, propertyName, address are required' });
@@ -296,7 +408,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/employees/units', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), async (req, res) => {
+  app.post('/employees/units', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), requirePermission('units:create'), async (req, res) => {
     const { propertyId, unitNumber, unitType, rentAmount } = req.body || {};
     if (!propertyId || !unitNumber) {
       res.status(400).json({ error: 'propertyId and unitNumber are required' });
@@ -321,7 +433,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/employees/contracts', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), async (req, res) => {
+  app.post('/employees/contracts', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), requirePermission('contracts:create'), async (req, res) => {
     const { unitId, ownerId, tenantId, startDate, endDate } = req.body || {};
     if (!unitId || !ownerId || !tenantId || !startDate || !endDate) {
       res.status(400).json({ error: 'Missing contract fields' });
@@ -346,7 +458,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.patch('/management/contracts/:id/approve', authenticateJwt, requireRoles(['system_admin', 'operations_manager']), async (req, res) => {
+  app.patch('/management/contracts/:id/approve', authenticateJwt, requireRoles(['system_admin', 'operations_manager']), requirePermission('contracts:approve'), async (req, res) => {
     const contractId = req.params.id;
     const db = openDb(dbPath);
     try {
@@ -373,7 +485,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.patch('/tenants/contracts/:id/sign', authenticateJwt, requireRoles(['tenant']), async (req, res) => {
+  app.patch('/tenants/contracts/:id/sign', authenticateJwt, requireRoles(['tenant']), requirePermission('contracts:sign'), async (req, res) => {
     const contractId = req.params.id;
     const db = openDb(dbPath);
     try {
@@ -404,7 +516,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.patch('/employees/contracts/:id/activate', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), async (req, res) => {
+  app.patch('/employees/contracts/:id/activate', authenticateJwt, requireRoles(['leasing_officer', 'operations_manager']), requirePermission('contracts:activate'), async (req, res) => {
     const contractId = req.params.id;
     const db = openDb(dbPath);
     try {
@@ -444,7 +556,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/tenants/payments', authenticateJwt, requireRoles(['tenant']), async (req, res) => {
+  app.post('/tenants/payments', authenticateJwt, requireRoles(['tenant']), requirePermission('payments:create'), async (req, res) => {
     const { contractId, amount, paymentDate } = req.body || {};
     if (!contractId || !amount || !paymentDate) {
       res.status(400).json({ error: 'Missing payment fields' });
@@ -469,7 +581,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/tenants/maintenance-requests', authenticateJwt, requireRoles(['tenant']), async (req, res) => {
+  app.post('/tenants/maintenance-requests', authenticateJwt, requireRoles(['tenant']), requirePermission('maintenance:request:create'), async (req, res) => {
     const { propertyId, issueDescription } = req.body || {};
     if (!propertyId || !issueDescription) {
       res.status(400).json({ error: 'Missing maintenance fields' });
@@ -494,7 +606,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/employees/maintenance-requests/:id/assign-technician', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), async (req, res) => {
+  app.post('/employees/maintenance-requests/:id/assign-technician', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), requirePermission('maintenance:assign'), async (req, res) => {
     const requestId = req.params.id;
     const { technicianId } = req.body || {};
     if (!technicianId) {
@@ -548,7 +660,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.patch('/technicians/work-orders/:id', authenticateJwt, requireRoles(['technician']), async (req, res) => {
+  app.patch('/technicians/work-orders/:id', authenticateJwt, requireRoles(['technician']), requirePermission('maintenance:work:update'), async (req, res) => {
     const workOrderId = req.params.id;
     const { status, report } = req.body || {};
     if (!status) {
@@ -596,7 +708,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.patch('/employees/maintenance-requests/:id/approve-completion', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), async (req, res) => {
+  app.patch('/employees/maintenance-requests/:id/approve-completion', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), requirePermission('maintenance:approve'), async (req, res) => {
     const requestId = req.params.id;
     const db = openDb(dbPath);
     try {
@@ -640,7 +752,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.post('/tenants/maintenance-requests/:id/rating', authenticateJwt, requireRoles(['tenant']), async (req, res) => {
+  app.post('/tenants/maintenance-requests/:id/rating', authenticateJwt, requireRoles(['tenant']), requirePermission('maintenance:rate'), async (req, res) => {
     const requestId = req.params.id;
     const { rating, comment } = req.body || {};
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
@@ -719,7 +831,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/me/notifications', authenticateJwt, async (req, res) => {
+  app.get('/me/notifications', authenticateJwt, requirePermission('notifications:read:self'), async (req, res) => {
     if (typeof req.user.sub !== 'number') {
       res.status(403).json({ error: 'User notifications are not available for this token type' });
       return;
@@ -742,7 +854,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.patch('/me/notifications/:id/read', authenticateJwt, async (req, res) => {
+  app.patch('/me/notifications/:id/read', authenticateJwt, requirePermission('notifications:mark-read:self'), async (req, res) => {
     if (typeof req.user.sub !== 'number') {
       res.status(403).json({ error: 'User notifications are not available for this token type' });
       return;
@@ -774,7 +886,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/reports/occupancy', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), async (_req, res) => {
+  app.get('/reports/occupancy', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), requirePermission('reports:view:management'), async (_req, res) => {
     const db = openDb(dbPath);
     try {
       const rows = await queryAll(
@@ -796,7 +908,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/reports/contracts-summary', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), async (_req, res) => {
+  app.get('/reports/contracts-summary', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), requirePermission('reports:view:management'), async (_req, res) => {
     const db = openDb(dbPath);
     try {
       const rows = await queryAll(
@@ -822,7 +934,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/reports/financial-summary', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), async (_req, res) => {
+  app.get('/reports/financial-summary', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), requirePermission('reports:view:management'), async (_req, res) => {
     const db = openDb(dbPath);
     try {
       const paymentRows = await queryAll(
@@ -856,7 +968,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/dashboard/management', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), async (_req, res) => {
+  app.get('/dashboard/management', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), requirePermission('dashboard:view:management'), async (_req, res) => {
     const db = openDb(dbPath);
     try {
       const dashboard = await buildManagementDashboard(db);
@@ -866,7 +978,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/dashboard/employee', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), async (req, res) => {
+  app.get('/dashboard/employee', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), requirePermission('dashboard:view:employee'), async (req, res) => {
     const db = openDb(dbPath);
     try {
       const dashboard = await buildEmployeeDashboard(db, req.user.sub);
@@ -876,7 +988,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/dashboard/owner', authenticateJwt, requireRoles(['owner']), async (req, res) => {
+  app.get('/dashboard/owner', authenticateJwt, requireRoles(['owner']), requirePermission('dashboard:view:owner'), async (req, res) => {
     const db = openDb(dbPath);
     try {
       const dashboard = await buildOwnerDashboard(db, req.user.sub);
@@ -886,7 +998,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/dashboard/tenant', authenticateJwt, requireRoles(['tenant']), async (req, res) => {
+  app.get('/dashboard/tenant', authenticateJwt, requireRoles(['tenant']), requirePermission('dashboard:view:tenant'), async (req, res) => {
     const db = openDb(dbPath);
     try {
       const dashboard = await buildTenantDashboard(db, req.user.sub);
@@ -896,7 +1008,7 @@ function createApp(options = {}) {
     }
   });
 
-  app.get('/dashboard/technician', authenticateJwt, requireRoles(['technician']), async (req, res) => {
+  app.get('/dashboard/technician', authenticateJwt, requireRoles(['technician']), requirePermission('dashboard:view:technician'), async (req, res) => {
     const db = openDb(dbPath);
     try {
       const dashboard = await buildTechnicianDashboard(db, req.user.sub);
@@ -911,22 +1023,42 @@ function createApp(options = {}) {
     try {
       const role = req.user.role;
       if (['system_admin', 'operations_manager', 'financial_auditor'].includes(role)) {
+        if (!(await roleHasPermission(db, role, 'dashboard:view:management'))) {
+          res.status(403).json({ error: 'Missing permission: dashboard:view:management' });
+          return;
+        }
         res.json(await buildManagementDashboard(db));
         return;
       }
       if (['leasing_officer', 'collections_officer'].includes(role)) {
+        if (!(await roleHasPermission(db, role, 'dashboard:view:employee'))) {
+          res.status(403).json({ error: 'Missing permission: dashboard:view:employee' });
+          return;
+        }
         res.json(await buildEmployeeDashboard(db, req.user.sub));
         return;
       }
       if (role === 'owner') {
+        if (!(await roleHasPermission(db, role, 'dashboard:view:owner'))) {
+          res.status(403).json({ error: 'Missing permission: dashboard:view:owner' });
+          return;
+        }
         res.json(await buildOwnerDashboard(db, req.user.sub));
         return;
       }
       if (role === 'tenant') {
+        if (!(await roleHasPermission(db, role, 'dashboard:view:tenant'))) {
+          res.status(403).json({ error: 'Missing permission: dashboard:view:tenant' });
+          return;
+        }
         res.json(await buildTenantDashboard(db, req.user.sub));
         return;
       }
       if (role === 'technician') {
+        if (!(await roleHasPermission(db, role, 'dashboard:view:technician'))) {
+          res.status(403).json({ error: 'Missing permission: dashboard:view:technician' });
+          return;
+        }
         res.json(await buildTechnicianDashboard(db, req.user.sub));
         return;
       }
@@ -1113,6 +1245,20 @@ function resolvePortalForRole(role) {
     return 'technician';
   }
   return null;
+}
+
+async function roleHasPermission(db, role, permissionKey) {
+  const rows = await queryAll(
+    db,
+    `SELECT 1
+     FROM roles r
+     INNER JOIN role_permissions rp ON rp.role_id = r.id
+     INNER JOIN permissions p ON p.id = rp.permission_id
+     WHERE r.name = ? AND p.key = ?
+     LIMIT 1`,
+    [role, permissionKey],
+  );
+  return rows.length > 0;
 }
 
 async function buildManagementDashboard(db) {

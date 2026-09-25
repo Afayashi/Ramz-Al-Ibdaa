@@ -15,6 +15,95 @@ const ROLE_NAMES = [
   'financial_auditor',
 ];
 
+const PERMISSION_KEYS = [
+  'properties:create',
+  'units:create',
+  'contracts:create',
+  'contracts:approve',
+  'contracts:sign',
+  'contracts:activate',
+  'maintenance:request:create',
+  'maintenance:assign',
+  'maintenance:work:update',
+  'maintenance:approve',
+  'maintenance:rate',
+  'payments:create',
+  'notifications:read:self',
+  'notifications:mark-read:self',
+  'reports:view:management',
+  'dashboard:view:management',
+  'dashboard:view:employee',
+  'dashboard:view:owner',
+  'dashboard:view:tenant',
+  'dashboard:view:technician',
+  'rbac:manage',
+];
+
+const ROLE_PERMISSION_MAP = {
+  system_admin: [
+    'properties:create',
+    'units:create',
+    'contracts:create',
+    'contracts:approve',
+    'contracts:activate',
+    'maintenance:assign',
+    'maintenance:approve',
+    'reports:view:management',
+    'dashboard:view:management',
+    'rbac:manage',
+  ],
+  operations_manager: [
+    'properties:create',
+    'units:create',
+    'contracts:create',
+    'contracts:approve',
+    'contracts:activate',
+    'maintenance:assign',
+    'maintenance:approve',
+    'reports:view:management',
+    'dashboard:view:management',
+    'dashboard:view:employee',
+    'rbac:manage',
+  ],
+  leasing_officer: [
+    'units:create',
+    'contracts:create',
+    'contracts:activate',
+    'maintenance:assign',
+    'maintenance:approve',
+    'dashboard:view:employee',
+  ],
+  collections_officer: [
+    'maintenance:assign',
+    'maintenance:approve',
+    'dashboard:view:employee',
+  ],
+  owner: [
+    'notifications:read:self',
+    'notifications:mark-read:self',
+    'dashboard:view:owner',
+  ],
+  tenant: [
+    'contracts:sign',
+    'maintenance:request:create',
+    'maintenance:rate',
+    'payments:create',
+    'notifications:read:self',
+    'notifications:mark-read:self',
+    'dashboard:view:tenant',
+  ],
+  technician: [
+    'maintenance:work:update',
+    'notifications:read:self',
+    'notifications:mark-read:self',
+    'dashboard:view:technician',
+  ],
+  financial_auditor: [
+    'reports:view:management',
+    'dashboard:view:management',
+  ],
+};
+
 const TABLE_DEFINITIONS = [
   `CREATE TABLE IF NOT EXISTS roles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -269,6 +358,32 @@ async function seedRoles(db) {
   }
 }
 
+async function seedPermissions(db) {
+  for (const permissionKey of PERMISSION_KEYS) {
+    await runStatement(
+      db,
+      'INSERT OR IGNORE INTO permissions (key, description) VALUES (?, ?)',
+      [permissionKey, `Permission: ${permissionKey}`],
+    );
+  }
+}
+
+async function seedRolePermissions(db) {
+  for (const [roleName, permissions] of Object.entries(ROLE_PERMISSION_MAP)) {
+    for (const permissionKey of permissions) {
+      await runStatement(
+        db,
+        `INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+         SELECT r.id, p.id
+         FROM roles r
+         INNER JOIN permissions p ON p.key = ?
+         WHERE r.name = ?`,
+        [permissionKey, roleName],
+      );
+    }
+  }
+}
+
 async function initDatabase(dbPath = DEFAULT_DB_PATH) {
   const directoryPath = path.dirname(dbPath);
   fs.mkdirSync(directoryPath, { recursive: true });
@@ -282,6 +397,8 @@ async function initDatabase(dbPath = DEFAULT_DB_PATH) {
     }
     await ensureLegacyUserColumns(db);
     await seedRoles(db);
+    await seedPermissions(db);
+    await seedRolePermissions(db);
   } finally {
     await closeDb(db);
   }
@@ -302,7 +419,9 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_DB_PATH,
+  PERMISSION_KEYS,
   ROLE_NAMES,
+  ROLE_PERMISSION_MAP,
   TABLE_DEFINITIONS,
   closeDb,
   initDatabase,

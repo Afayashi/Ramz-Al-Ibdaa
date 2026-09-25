@@ -130,3 +130,17 @@ POST /auth/oauth/token
 - `GET /dashboard/tenant` (للمستأجر)
 - `GET /dashboard/technician` (للفني)
 - `GET /dashboard/me` (يرجع لوحة الدور الحالي تلقائياً)
+
+## إدارة الصلاحيات (RBAC Permissions)
+
+- `GET /admin/permissions` (قائمة جميع الصلاحيات المتاحة)
+- `GET /admin/roles/:roleName/permissions` (عرض صلاحيات دور محدد)
+- `POST /admin/roles/:roleName/permissions` (إسناد صلاحيات إضافية لدور محدد)
+
+مثال body:
+
+```json
+{
+  "permissions": ["notifications:read:self"]
+}
+```
