@@ -50,6 +50,15 @@ npm run db:init
 npm start
 ```
 
+## النشر على Cloudflare Workers
+
+- هذا المستودع يحتوي الآن ملفات static داخل `public/`.
+- أمر النشر:
+
+```bash
+npx wrangler deploy
+```
+
 ## الأمان المطبق
 
 - تشفير كلمات المرور باستخدام BCrypt.
