@@ -1,0 +1,31 @@
+{
+  "name": "ramz-al-ibdaa",
+  "version": "1.0.0",
+  "description": "تطبيق إدارة العقارات هو منصة رقمية متكاملة تهدف إلى أتمتة وإدارة جميع العمليات العقارية من مكان واحد، حيث يربط بين إدارة الشركة والموظفين وملاك العقارات والمستأجرين والفنيين عبر نظام موحد يوفر الشفافية وسهولة التواصل وسرعة تنفيذ العمليات التشغيلية والمالية.",
+  "scripts": {
+    "test": "node --test",
+    "db:init": "node src/db/initDatabase.js",
+    "start": "node src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/Afayashi/Ramz-Al-Ibdaa"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=20.17.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "jsonwebtoken": "^9.0.3",
+    "sqlite3": "^6.0.1"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "supertest": "^7.3.0"
+  }
+}
