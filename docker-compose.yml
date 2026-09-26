@@ -1,0 +1,29 @@
+# تشغيل كامل: docker compose up -d --build   (الجداول تُنشأ تلقائياً)
+# البيانات الأولية من جهازك: cd backend && DATABASE_URL=postgresql://erp:change-me-db@localhost:5432/erp npx prisma db seed
+services:
+  db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: erp
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me-db}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: [dbdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U erp -d erp"]
+      interval: 5s
+      retries: 10
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on: { db: { condition: service_healthy } }
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://erp:${DB_PASSWORD:-change-me-db}@db:5432/erp
+      NODE_ENV: production
+    ports: ["3000:3000"]
+    volumes: [uploads:/app/uploads]
+volumes:
+  dbdata:
+  uploads:
