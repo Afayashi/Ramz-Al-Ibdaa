@@ -31,7 +31,7 @@ test('initDatabase creates sqlite file and required tables', async () => {
 
   const rows = await query(
     dbPath,
-    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('roles','permissions','role_permissions','users','owners','tenants','properties','units','amenities','contracts','payments','maintenance_requests','work_orders','vendors','revenues','expenses','journal_entries','transfers','notifications','messages','two_factor_challenges','audit_logs') ORDER BY name",
+    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('roles','permissions','role_permissions','users','owners','tenants','properties','units','amenities','contracts','payments','maintenance_requests','work_orders','work_order_attachments','vendors','revenues','expenses','journal_entries','transfers','notifications','messages','two_factor_challenges','audit_logs') ORDER BY name",
   );
 
   assert.deepEqual(rows.map((row) => row.name), [
@@ -56,6 +56,7 @@ test('initDatabase creates sqlite file and required tables', async () => {
     'units',
     'users',
     'vendors',
+    'work_order_attachments',
     'work_orders',
   ]);
 });

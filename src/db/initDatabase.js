@@ -25,6 +25,8 @@ const PERMISSION_KEYS = [
   'maintenance:request:create',
   'maintenance:assign',
   'maintenance:work:update',
+  'maintenance:attachment:upload',
+  'maintenance:attachment:read',
   'maintenance:approve',
   'maintenance:rate',
   'payments:create',
@@ -51,6 +53,7 @@ const ROLE_PERMISSION_MAP = {
     'contracts:approve',
     'contracts:activate',
     'maintenance:assign',
+    'maintenance:attachment:read',
     'maintenance:approve',
     'messages:send:self',
     'messages:read:self',
@@ -67,6 +70,7 @@ const ROLE_PERMISSION_MAP = {
     'contracts:approve',
     'contracts:activate',
     'maintenance:assign',
+    'maintenance:attachment:read',
     'maintenance:approve',
     'messages:send:self',
     'messages:read:self',
@@ -82,7 +86,9 @@ const ROLE_PERMISSION_MAP = {
     'contracts:create',
     'contracts:activate',
     'maintenance:assign',
+    'maintenance:attachment:read',
     'maintenance:approve',
+    'maintenance:attachment:upload',
     'messages:send:self',
     'messages:read:self',
     'messages:mark-read:self',
@@ -90,6 +96,7 @@ const ROLE_PERMISSION_MAP = {
   ],
   collections_officer: [
     'maintenance:assign',
+    'maintenance:attachment:read',
     'maintenance:approve',
     'messages:send:self',
     'messages:read:self',
@@ -99,6 +106,7 @@ const ROLE_PERMISSION_MAP = {
   owner: [
     'notifications:read:self',
     'notifications:mark-read:self',
+    'maintenance:attachment:read',
     'messages:send:self',
     'messages:read:self',
     'messages:mark-read:self',
@@ -107,6 +115,7 @@ const ROLE_PERMISSION_MAP = {
   tenant: [
     'contracts:sign',
     'maintenance:request:create',
+    'maintenance:attachment:read',
     'maintenance:rate',
     'payments:create',
     'notifications:read:self',
@@ -118,6 +127,8 @@ const ROLE_PERMISSION_MAP = {
   ],
   technician: [
     'maintenance:work:update',
+    'maintenance:attachment:upload',
+    'maintenance:attachment:read',
     'notifications:read:self',
     'notifications:mark-read:self',
     'messages:send:self',
@@ -248,6 +259,17 @@ const TABLE_DEFINITIONS = [
     FOREIGN KEY(maintenance_request_id) REFERENCES maintenance_requests(id),
     FOREIGN KEY(technician_id) REFERENCES users(id)
   )`,
+  `CREATE TABLE IF NOT EXISTS work_order_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_order_id INTEGER NOT NULL,
+    uploaded_by INTEGER NOT NULL,
+    file_name TEXT NOT NULL,
+    file_url TEXT NOT NULL,
+    file_type TEXT NOT NULL DEFAULT 'image',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(work_order_id) REFERENCES work_orders(id),
+    FOREIGN KEY(uploaded_by) REFERENCES users(id)
+  )`,
   `CREATE TABLE IF NOT EXISTS vendors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -377,14 +399,14 @@ async function ensureLegacyUserColumns(db) {
     if (!existing.has(name)) {
       await runStatement(db, `ALTER TABLE users ADD COLUMN ${name} ${definition}`);
     }
+  }
+}
 
-    async function ensureLegacyMessageColumns(db) {
-      const columns = await queryAll(db, 'PRAGMA table_info(messages)');
-      const existing = new Set(columns.map((column) => column.name));
-      if (!existing.has('is_read')) {
-        await runStatement(db, 'ALTER TABLE messages ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0');
-      }
-    }
+async function ensureLegacyMessageColumns(db) {
+  const columns = await queryAll(db, 'PRAGMA table_info(messages)');
+  const existing = new Set(columns.map((column) => column.name));
+  if (!existing.has('is_read')) {
+    await runStatement(db, 'ALTER TABLE messages ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0');
   }
 }
 

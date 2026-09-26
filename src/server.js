@@ -810,6 +810,103 @@ function createApp(options = {}) {
     }
   });
 
+  app.post('/technicians/work-orders/:id/attachments', authenticateJwt, requireRoles(['technician']), requirePermission('maintenance:attachment:upload'), async (req, res) => {
+    const workOrderId = Number(req.params.id);
+    const fileName = typeof req.body?.fileName === 'string' ? req.body.fileName.trim() : '';
+    const fileUrl = typeof req.body?.fileUrl === 'string' ? req.body.fileUrl.trim() : '';
+    const fileType = typeof req.body?.fileType === 'string' ? req.body.fileType.trim() : 'image';
+    if (!workOrderId || !fileName || !fileUrl) {
+      res.status(400).json({ error: 'workOrderId, fileName, and fileUrl are required' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        'SELECT id, technician_id FROM work_orders WHERE id = ? LIMIT 1',
+        [workOrderId],
+      );
+      const workOrder = rows[0];
+      if (!workOrder || workOrder.technician_id !== req.user.sub) {
+        res.status(404).json({ error: 'Work order not found for this technician' });
+        return;
+      }
+
+      const result = await runStatement(
+        db,
+        'INSERT INTO work_order_attachments (work_order_id, uploaded_by, file_name, file_url, file_type) VALUES (?, ?, ?, ?, ?)',
+        [workOrderId, req.user.sub, fileName, fileUrl, fileType],
+      );
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id, metadata) VALUES (?, ?, ?, ?, ?)',
+        [req.user.sub, 'WORK_ORDER_ATTACHMENT_UPLOAD', 'work_order_attachments', String(result.lastID), JSON.stringify({ workOrderId, fileName, fileType })],
+      );
+      res.status(201).json({ attachmentId: result.lastID, workOrderId });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get(
+    '/maintenance-requests/:id/attachments',
+    authenticateJwt,
+    requireRoles(['system_admin', 'operations_manager', 'leasing_officer', 'collections_officer', 'owner', 'tenant', 'technician']),
+    requirePermission('maintenance:attachment:read'),
+    async (req, res) => {
+      const requestId = Number(req.params.id);
+      if (!requestId) {
+        res.status(400).json({ error: 'Invalid maintenance request id' });
+        return;
+      }
+
+      const db = openDb(dbPath);
+      try {
+        const requests = await queryAll(
+          db,
+          `SELECT mr.id, mr.tenant_id, mr.technician_id, p.owner_id
+           FROM maintenance_requests mr
+           INNER JOIN properties p ON p.id = mr.property_id
+           WHERE mr.id = ?
+           LIMIT 1`,
+          [requestId],
+        );
+        const maintenanceRequest = requests[0];
+        if (!maintenanceRequest) {
+          res.status(404).json({ error: 'Maintenance request not found' });
+          return;
+        }
+
+        if (req.user.role === 'tenant' && maintenanceRequest.tenant_id !== req.user.sub) {
+          res.status(403).json({ error: 'Forbidden for this tenant' });
+          return;
+        }
+        if (req.user.role === 'owner' && maintenanceRequest.owner_id !== req.user.sub) {
+          res.status(403).json({ error: 'Forbidden for this owner' });
+          return;
+        }
+        if (req.user.role === 'technician' && maintenanceRequest.technician_id !== req.user.sub) {
+          res.status(403).json({ error: 'Forbidden for this technician' });
+          return;
+        }
+
+        const attachments = await queryAll(
+          db,
+          `SELECT a.id, a.work_order_id, a.uploaded_by, a.file_name, a.file_url, a.file_type, a.created_at
+           FROM work_order_attachments a
+           INNER JOIN work_orders wo ON wo.id = a.work_order_id
+           WHERE wo.maintenance_request_id = ?
+           ORDER BY a.id DESC`,
+          [requestId],
+        );
+        res.json({ maintenanceRequestId: requestId, attachments });
+      } finally {
+        await closeDb(db);
+      }
+    },
+  );
+
   app.patch('/employees/maintenance-requests/:id/approve-completion', authenticateJwt, requireRoles(['leasing_officer', 'collections_officer', 'operations_manager']), requirePermission('maintenance:approve'), async (req, res) => {
     const requestId = req.params.id;
     const db = openDb(dbPath);

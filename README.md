@@ -108,6 +108,8 @@ POST /auth/oauth/token
   - `POST /tenants/maintenance-requests` (إنشاء طلب)
   - `POST /employees/maintenance-requests/:id/assign-technician` (تعيين فني + أمر عمل)
   - `PATCH /technicians/work-orders/:id` (in_progress / completed + تقرير)
+  - `POST /technicians/work-orders/:id/attachments` (رفع صور/مرفقات الصيانة)
+  - `GET /maintenance-requests/:id/attachments` (عرض مرفقات الطلب للأطراف المخولة)
   - `PATCH /employees/maintenance-requests/:id/approve-completion` (اعتماد الإغلاق + إشعارات)
   - `POST /tenants/maintenance-requests/:id/rating` (تقييم الخدمة بعد الإغلاق)
 
