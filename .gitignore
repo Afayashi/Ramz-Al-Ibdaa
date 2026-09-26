@@ -1,3 +1,8 @@
 node_modules/
 data/*.db
 .env
+.wrangler/
+dist/
+coverage/
+*.log
+*.tmp
