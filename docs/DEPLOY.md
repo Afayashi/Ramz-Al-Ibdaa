@@ -3,6 +3,9 @@
 ## 1. المتطلبات
 خادم Ubuntu 22.04+ (2 vCPU · 4GB) · Docker + Compose v2 · نطاق يشير إلى الخادم (A record) · منفذا 80 و443 مفتوحان.
 
+## نشر الصفحة الثابتة عبر Cloudflare Workers
+إذا كانت بيئة النشر تشغّل الأمر `npx wrangler deploy` من جذر المستودع، فسيتم نشر الملفات الثابتة الموجودة داخل `public/` باستخدام الإعداد الموجود في `wrangler.toml`.
+
 ## 2. الإعداد الأول
 ```bash
 git clone <repo> erp && cd erp/code_sprint1
