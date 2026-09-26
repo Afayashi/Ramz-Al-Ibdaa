@@ -153,3 +153,11 @@ POST /auth/oauth/token
 - `GET /security/audit-logs/summary`
   - تجميع العمليات حسب `action`
   - يدعم `dateFrom`, `dateTo`
+
+## الرسائل الداخلية (In-App Messaging)
+
+- `POST /me/messages` (إرسال رسالة داخلية)
+- `GET /me/messages/inbox` (صندوق الوارد)
+  - يدعم `unreadOnly=true` لعرض غير المقروء فقط
+- `GET /me/messages/sent` (الرسائل المرسلة)
+- `PATCH /me/messages/:id/read` (تعليم الرسالة كمقروءة)

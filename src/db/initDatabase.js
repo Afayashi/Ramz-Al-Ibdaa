@@ -30,6 +30,9 @@ const PERMISSION_KEYS = [
   'payments:create',
   'notifications:read:self',
   'notifications:mark-read:self',
+  'messages:send:self',
+  'messages:read:self',
+  'messages:mark-read:self',
   'reports:view:management',
   'audit:view',
   'dashboard:view:management',
@@ -49,6 +52,9 @@ const ROLE_PERMISSION_MAP = {
     'contracts:activate',
     'maintenance:assign',
     'maintenance:approve',
+    'messages:send:self',
+    'messages:read:self',
+    'messages:mark-read:self',
     'reports:view:management',
     'audit:view',
     'dashboard:view:management',
@@ -62,6 +68,9 @@ const ROLE_PERMISSION_MAP = {
     'contracts:activate',
     'maintenance:assign',
     'maintenance:approve',
+    'messages:send:self',
+    'messages:read:self',
+    'messages:mark-read:self',
     'reports:view:management',
     'audit:view',
     'dashboard:view:management',
@@ -74,16 +83,25 @@ const ROLE_PERMISSION_MAP = {
     'contracts:activate',
     'maintenance:assign',
     'maintenance:approve',
+    'messages:send:self',
+    'messages:read:self',
+    'messages:mark-read:self',
     'dashboard:view:employee',
   ],
   collections_officer: [
     'maintenance:assign',
     'maintenance:approve',
+    'messages:send:self',
+    'messages:read:self',
+    'messages:mark-read:self',
     'dashboard:view:employee',
   ],
   owner: [
     'notifications:read:self',
     'notifications:mark-read:self',
+    'messages:send:self',
+    'messages:read:self',
+    'messages:mark-read:self',
     'dashboard:view:owner',
   ],
   tenant: [
@@ -93,17 +111,26 @@ const ROLE_PERMISSION_MAP = {
     'payments:create',
     'notifications:read:self',
     'notifications:mark-read:self',
+    'messages:send:self',
+    'messages:read:self',
+    'messages:mark-read:self',
     'dashboard:view:tenant',
   ],
   technician: [
     'maintenance:work:update',
     'notifications:read:self',
     'notifications:mark-read:self',
+    'messages:send:self',
+    'messages:read:self',
+    'messages:mark-read:self',
     'dashboard:view:technician',
   ],
   financial_auditor: [
     'reports:view:management',
     'audit:view',
+    'messages:send:self',
+    'messages:read:self',
+    'messages:mark-read:self',
     'dashboard:view:management',
   ],
 };
@@ -270,6 +297,7 @@ const TABLE_DEFINITIONS = [
     sender_id INTEGER NOT NULL,
     recipient_id INTEGER NOT NULL,
     body TEXT NOT NULL,
+    is_read INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(sender_id) REFERENCES users(id),
     FOREIGN KEY(recipient_id) REFERENCES users(id)
@@ -349,6 +377,14 @@ async function ensureLegacyUserColumns(db) {
     if (!existing.has(name)) {
       await runStatement(db, `ALTER TABLE users ADD COLUMN ${name} ${definition}`);
     }
+
+    async function ensureLegacyMessageColumns(db) {
+      const columns = await queryAll(db, 'PRAGMA table_info(messages)');
+      const existing = new Set(columns.map((column) => column.name));
+      if (!existing.has('is_read')) {
+        await runStatement(db, 'ALTER TABLE messages ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0');
+      }
+    }
   }
 }
 
@@ -400,6 +436,7 @@ async function initDatabase(dbPath = DEFAULT_DB_PATH) {
       await runStatement(db, sql);
     }
     await ensureLegacyUserColumns(db);
+    await ensureLegacyMessageColumns(db);
     await seedRoles(db);
     await seedPermissions(db);
     await seedRolePermissions(db);

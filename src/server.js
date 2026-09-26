@@ -988,6 +988,130 @@ function createApp(options = {}) {
     }
   });
 
+  app.post('/me/messages', authenticateJwt, requirePermission('messages:send:self'), async (req, res) => {
+    if (typeof req.user.sub !== 'number') {
+      res.status(403).json({ error: 'User messaging is not available for this token type' });
+      return;
+    }
+
+    const recipientId = Number(req.body?.recipientId);
+    const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+    if (!recipientId || !body) {
+      res.status(400).json({ error: 'recipientId and body are required' });
+      return;
+    }
+
+    const db = openDb(dbPath);
+    try {
+      const users = await queryAll(db, 'SELECT id FROM users WHERE id = ? LIMIT 1', [recipientId]);
+      if (users.length === 0) {
+        res.status(404).json({ error: 'Recipient not found' });
+        return;
+      }
+
+      const messageResult = await runStatement(
+        db,
+        'INSERT INTO messages (sender_id, recipient_id, body) VALUES (?, ?, ?)',
+        [req.user.sub, recipientId, body],
+      );
+      await runStatement(
+        db,
+        'INSERT INTO notifications (user_id, channel, subject, body, status) VALUES (?, ?, ?, ?, ?)',
+        [recipientId, 'in_app', 'رسالة جديدة', 'لديك رسالة جديدة داخل النظام.', 'queued'],
+      );
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
+        [req.user.sub, 'MESSAGE_SEND', 'messages', String(messageResult.lastID)],
+      );
+      res.status(201).json({ messageId: messageResult.lastID });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/me/messages/inbox', authenticateJwt, requirePermission('messages:read:self'), async (req, res) => {
+    if (typeof req.user.sub !== 'number') {
+      res.status(403).json({ error: 'User messaging is not available for this token type' });
+      return;
+    }
+
+    const unreadOnly = String(req.query.unreadOnly || 'false') === 'true';
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 100)));
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        `SELECT id, sender_id, recipient_id, body, is_read, created_at
+         FROM messages
+         WHERE recipient_id = ?
+           AND (? = 0 OR is_read = 0)
+         ORDER BY id DESC
+         LIMIT ?`,
+        [req.user.sub, unreadOnly ? 1 : 0, limit],
+      );
+      res.json({ messages: rows });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.get('/me/messages/sent', authenticateJwt, requirePermission('messages:read:self'), async (req, res) => {
+    if (typeof req.user.sub !== 'number') {
+      res.status(403).json({ error: 'User messaging is not available for this token type' });
+      return;
+    }
+
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 100)));
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        `SELECT id, sender_id, recipient_id, body, is_read, created_at
+         FROM messages
+         WHERE sender_id = ?
+         ORDER BY id DESC
+         LIMIT ?`,
+        [req.user.sub, limit],
+      );
+      res.json({ messages: rows });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
+  app.patch('/me/messages/:id/read', authenticateJwt, requirePermission('messages:mark-read:self'), async (req, res) => {
+    if (typeof req.user.sub !== 'number') {
+      res.status(403).json({ error: 'User messaging is not available for this token type' });
+      return;
+    }
+
+    const messageId = Number(req.params.id);
+    const db = openDb(dbPath);
+    try {
+      const rows = await queryAll(
+        db,
+        'SELECT id, recipient_id FROM messages WHERE id = ? LIMIT 1',
+        [messageId],
+      );
+      const message = rows[0];
+      if (!message || message.recipient_id !== req.user.sub) {
+        res.status(404).json({ error: 'Message not found' });
+        return;
+      }
+
+      await runStatement(db, 'UPDATE messages SET is_read = 1 WHERE id = ?', [messageId]);
+      await runStatement(
+        db,
+        'INSERT INTO audit_logs (actor_user_id, action, target_type, target_id) VALUES (?, ?, ?, ?)',
+        [req.user.sub, 'MESSAGE_READ', 'messages', String(messageId)],
+      );
+      res.json({ messageId, status: 'read' });
+    } finally {
+      await closeDb(db);
+    }
+  });
+
   app.get('/reports/occupancy', authenticateJwt, requireRoles(['system_admin', 'operations_manager', 'financial_auditor']), requirePermission('reports:view:management'), async (_req, res) => {
     const db = openDb(dbPath);
     try {
