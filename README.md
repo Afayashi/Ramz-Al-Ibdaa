@@ -390,6 +390,8 @@ npm run start:dev           # http://localhost:3000/api
 **مستخدم تجريبي:** `admin@erp.local` / `Admin@12345`  
 **رمز OTP يُطبع في سجل الخادم** (أضف مزود SMS في Sprint 11)
 
+> تم توفير ملف جاهز: `/home/runner/work/Ramz-Al-Ibdaa/Ramz-Al-Ibdaa/backend/.env.example`
+
 ---
 
 ## 📱 تشغيل تطبيق Flutter
@@ -489,6 +491,16 @@ npm run seed:demo      # بيانات تجريبية غنية
 npx prisma migrate dev -n init
 npx prisma db seed
 ```
+
+### سحابياً (Render Blueprint):
+```bash
+# 1. من Render اختر New + > Blueprint
+# 2. اربط المستودع وسيتم قراءة render.yaml تلقائياً
+# 3. Render ينشئ PostgreSQL مُدار + خدمة API
+# 4. عدّل CORS_ORIGINS في متغيرات البيئة على Render
+```
+
+ملف النشر السحابي الجاهز: `/home/runner/work/Ramz-Al-Ibdaa/Ramz-Al-Ibdaa/render.yaml`
 
 ### استعراض البيانات:
 ```bash
